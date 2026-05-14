@@ -1,0 +1,14 @@
+[project]
+name = "test-board-backend"
+version = "0.1.0"
+description = "Alexa To-Do API backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "aiohttp",
+    "aioamazondevices",
+]
+
+[dependency-groups]
+dev = []
