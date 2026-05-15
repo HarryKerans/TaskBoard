@@ -876,6 +876,7 @@ dependencies = [
     { name = "aioamazondevices" },
     { name = "aiohttp" },
     { name = "fastapi" },
+    { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -884,6 +885,7 @@ requires-dist = [
     { name = "aioamazondevices" },
     { name = "aiohttp" },
     { name = "fastapi" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 

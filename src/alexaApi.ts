@@ -13,16 +13,11 @@ export interface AlexaItem {
   [key: string]: unknown;
 }
 
-export async function login(
-  email: string,
-  password: string,
-  otp: string,
-  country_code = 'com',
-): Promise<void> {
+export async function login(otp: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, otp, country_code }),
+    body: JSON.stringify({ otp }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
