@@ -1,8 +1,15 @@
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
+
+logger = logging.getLogger("alexa_api")
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -93,17 +100,14 @@ async def login(body: LoginRequest):
     global _login_data, _credentials
 
     # Load from .env if not provided in request
-    print(f"[DEBUG] Body received - email: '{body.email}', country: '{body.country_code}', otp: '{body.otp}'")
-    print(f"[DEBUG] Env vars - REACT_APP_AMAZON_EMAIL: '{os.environ.get('REACT_APP_AMAZON_EMAIL')}', REACT_APP_AMAZON_COUNTRY: '{os.environ.get('REACT_APP_AMAZON_COUNTRY')}'")
+    logger.debug("Body received - email: '%s', country: '%s', otp: '%s'", body.email, body.country_code, body.otp)
+    logger.debug("Env vars - REACT_APP_AMAZON_EMAIL: '%s', REACT_APP_AMAZON_COUNTRY: '%s'", os.environ.get('REACT_APP_AMAZON_EMAIL'), os.environ.get('REACT_APP_AMAZON_COUNTRY'))
     email = os.environ.get("REACT_APP_AMAZON_EMAIL")
     password = os.environ.get("REACT_APP_AMAZON_PASSWORD")
     country_code = os.environ.get("REACT_APP_AMAZON_COUNTRY", "com")
 
-    print("[DEBUG] Attempting login with:")
-    print(f"[DEBUG] Email: {email}")
-    print(f"[DEBUG] Country: {country_code}")
-    print(f"[DEBUG] OTP: {body.otp}")
-    # Do NOT print password for security reasons
+    logger.debug("Attempting login - email: %s, country: %s", email, country_code)
+    # Do NOT log password for security reasons
 
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing email or password (provide in .env or request body)")
@@ -112,13 +116,13 @@ async def login(body: LoginRequest):
     try:
         login_data = await api.login.login_mode_interactive(body.otp)
     except CannotAuthenticate as e:
-        print(f"[DEBUG] CannotAuthenticate exception: {e}")
+        logger.error("CannotAuthenticate: %s", e)
         raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
     except CannotConnect as e:
-        print(f"[DEBUG] CannotConnect exception: {e}")
+        logger.error("CannotConnect: %s", e)
         raise HTTPException(status_code=503, detail=f"Could not connect to Amazon: {e}")
     except Exception as e:
-        print(f"[DEBUG] Unexpected exception: {e}")
+        logger.exception("Unexpected error during login")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
     _login_data = login_data
@@ -128,7 +132,7 @@ async def login(body: LoginRequest):
         "country_code": country_code,
     }
 
-    print("[DEBUG] Login successful!")
+    logger.info("Login successful for %s", email)
     return {"status": "ok"}
 
 
