@@ -29,19 +29,9 @@ def set_state(session, login_data, credentials):
 def _echo_api() -> AmazonEchoApi:
     return make_echo_api(_session, _login_data, _credentials)
 
-
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
-
 class LoginRequest(BaseModel):
     otp: str
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
+    
 @router.post("/auth/login")
 async def login(body: LoginRequest):
     """Authenticate with Amazon using email, password, and OTP."""
