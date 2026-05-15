@@ -28,3 +28,6 @@ backend/__pycache__
 backend/pyalexatodo/__pycache__
 backend/pyalexatodo/models/__pycache__
 .env
+
+# API docs
+backend/docs
