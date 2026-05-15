@@ -1,5 +1,5 @@
 import { useState, useCallback, type ReactElement } from 'react';
-import { login } from './alexaApi';
+import { login, getLists, getListItems, type AlexaItem } from './alexaApi';
 import TaskCard from './TaskCard';
 import './App.css';
 
@@ -10,6 +10,7 @@ function App(): ReactElement {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [otp, setOtp] = useState('');
+  const [todoItems, setTodoItems] = useState<AlexaItem[]>([]);
 
   const handleLogin = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,6 +18,14 @@ function App(): ReactElement {
     setLoading(true);
     try {
       await login(otp);
+
+      const lists = await getLists();
+      const todoList = lists.find(l => l.listType === 'TODO');
+      if (todoList) {
+        const items = await getListItems(todoList.listId);
+        setTodoItems(items);
+      }
+
       setState('dashboard');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -27,7 +36,7 @@ function App(): ReactElement {
 
   return (
     <div className="App">
-      <main className="App-main">
+      <main className={state === 'dashboard' ? 'App-main App-main--dashboard' : 'App-main'}>
         {state === 'login' && (
           <div className="panel">
             <h1 className="panel__title">Alexa To-Do</h1>
@@ -46,9 +55,16 @@ function App(): ReactElement {
         )}
 
         {state === 'dashboard' && (
-          <div className="panel">
-            <h1 className="panel__title">Dashboard</h1>
-            <TaskCard title="Make dashboard app" priority="high" />
+          <div className="panel panel--full">
+            <h1 className="dashboard__title">To Do List</h1>
+            <div className="dashboard">
+              <div className="container">
+                <TaskCard title="Make dashboard app" priority="high" />
+                {todoItems.map(item => (
+                  <TaskCard key={item.itemId} title={item.itemName} priority="medium" />
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </main>

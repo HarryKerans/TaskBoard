@@ -2,14 +2,15 @@ const BASE_URL = process.env.REACT_APP_API_URL ?? 'http://localhost:8000';
 
 export interface AlexaList {
   listId: string;
-  name: string;
+  listType: string;
+  listName?: string;
   [key: string]: unknown;
 }
 
 export interface AlexaItem {
   itemId: string;
-  value: string;
-  status: string;
+  itemName: string;
+  itemStatus: string;
   [key: string]: unknown;
 }
 
@@ -28,7 +29,8 @@ export async function login(otp: string): Promise<void> {
 export async function getLists(): Promise<AlexaList[]> {
   const res = await fetch(`${BASE_URL}/lists`);
   if (!res.ok) throw new Error('Failed to fetch lists');
-  return res.json();
+  const data = await res.json();
+  return data.listInfoList ?? [];
 }
 
 export async function getListItems(listId: string): Promise<AlexaItem[]> {
