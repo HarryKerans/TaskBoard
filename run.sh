@@ -9,6 +9,10 @@ if [ -z "${DATABASE_PATH}" ] || [ "${DATABASE_PATH}" = "null" ]; then
   export DATABASE_PATH="/data/tasks.db"
 fi
 
+if [ -z "${REACT_APP_AMAZON_COUNTRY}" ] || [ "${REACT_APP_AMAZON_COUNTRY}" = "null" ]; then
+  export REACT_APP_AMAZON_COUNTRY="co.uk"
+fi
+
 echo "Using database path: ${DATABASE_PATH}"
 
 cd /app/backend
