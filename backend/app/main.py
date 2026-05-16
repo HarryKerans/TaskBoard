@@ -61,10 +61,6 @@ def initialise_database() -> None:
             )
             """
         )
-        # Migrate existing DBs that don't yet have the priority column
-        existing = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
-        if "priority" not in existing:
-            connection.execute("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'")
         connection.commit()
 
 
