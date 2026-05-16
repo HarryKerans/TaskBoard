@@ -1,4 +1,3 @@
-import os
 import logging
 from http import HTTPMethod
 
@@ -7,7 +6,7 @@ from aioamazondevices.exceptions import CannotAuthenticate, CannotConnect, Canno
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from helpers import amazon_request, make_echo_api
+from app.helpers import amazon_request, make_echo_api, get_settings
 
 logger = logging.getLogger("alexa_api")
 
@@ -39,9 +38,10 @@ async def login(body: LoginRequest):
 
     logger.debug("Login attempt - otp provided: %s", bool(body.otp))
 
-    email = os.environ.get("REACT_APP_AMAZON_EMAIL")
-    password = os.environ.get("REACT_APP_AMAZON_PASSWORD")
-    country_code = os.environ.get("REACT_APP_AMAZON_COUNTRY", "com")
+    settings = get_settings()
+    email = settings.amazon_email
+    password = settings.amazon_password
+    country_code = settings.amazon_country or "com"
 
     logger.debug("Attempting login - email: %s, country: %s", email, country_code)
 

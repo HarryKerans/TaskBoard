@@ -23,10 +23,11 @@ yarn-debug.log*
 yarn-error.log*
 
 # Python / uv
-backend/.venv
-backend/__pycache__
-backend/pyalexatodo/__pycache__
-backend/pyalexatodo/models/__pycache__
+backend/app/.venv
+backend/app/__pycache__
+backend/app/pyalexatodo/__pycache__
+backend/app/pyalexatodo/models/__pycache__
+backend/__pycache__/
 .env
 
 # API docs

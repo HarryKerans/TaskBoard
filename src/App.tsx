@@ -1,6 +1,6 @@
 import { useState, useCallback, type ReactElement } from 'react';
-import { login, getLists, getListItems, type AlexaItem } from './alexaApi';
-import TaskCard from './TaskCard';
+import { login, getLists, getListItems, type AlexaItem } from './alexaApi.ts';
+import TaskCard from './TaskCard.tsx';
 import './App.css';
 
 type AppState = 'login' | 'dashboard';
