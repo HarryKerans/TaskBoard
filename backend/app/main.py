@@ -35,6 +35,7 @@ app.include_router(router)
 
 class TaskCreate(BaseModel):
     title: str
+    priority: str = 'medium'
 
 
 def get_connection() -> sqlite3.Connection:
@@ -53,12 +54,17 @@ def initialise_database() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
+                priority TEXT NOT NULL DEFAULT 'medium',
                 source_type TEXT NOT NULL DEFAULT 'manual',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        # Migrate existing DBs that don't yet have the priority column
+        existing = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
+        if "priority" not in existing:
+            connection.execute("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'")
         connection.commit()
 
 
@@ -82,7 +88,7 @@ def list_tasks() -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT id, title, status, source_type, created_at, updated_at
+            SELECT id, title, status, priority, source_type, created_at, updated_at
             FROM tasks
             ORDER BY id DESC
             """
@@ -96,17 +102,17 @@ def create_task(task: TaskCreate) -> dict[str, Any]:
     with get_connection() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO tasks (title, status, source_type)
-            VALUES (?, 'open', 'manual')
+            INSERT INTO tasks (title, status, priority, source_type)
+            VALUES (?, 'open', ?, 'manual')
             """,
-            (task.title,),
+            (task.title, task.priority),
         )
 
         task_id = cursor.lastrowid
 
         row = connection.execute(
             """
-            SELECT id, title, status, source_type, created_at, updated_at
+            SELECT id, title, status, priority, source_type, created_at, updated_at
             FROM tasks
             WHERE id = ?
             """,

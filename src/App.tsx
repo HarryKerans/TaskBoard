@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, getLists, getListItems, checkAuthStatus, type AlexaItem } from './alexaApi.ts';
+import { login, getLists, getListItems, getTasks, checkAuthStatus, type AlexaItem, type LocalTask } from './alexaApi.ts';
 import TaskCard from './TaskCard.tsx';
 import './App.css';
 
@@ -11,14 +11,25 @@ function App(): ReactElement {
   const [loading, setLoading] = useState(false);
   const [otp, setOtp] = useState('');
   const [todoItems, setTodoItems] = useState<AlexaItem[]>([]);
+  const [localOnlyTasks, setLocalOnlyTasks] = useState<LocalTask[]>([]);
 
   const loadDashboard = useCallback(async () => {
-    const lists = await getLists();
+    const [lists, localTasks] = await Promise.all([getLists(), getTasks()]);
+
+    let alexaItems: AlexaItem[] = [];
     const todoList = lists.find(l => l.listType === 'TODO');
     if (todoList) {
-      const items = await getListItems(todoList.listId);
-      setTodoItems(items);
+      alexaItems = await getListItems(todoList.listId);
     }
+
+    // Deduplicate: only show local tasks whose title doesn't already appear in Alexa list
+    const alexaTitles = new Set(alexaItems.map(i => i.itemName.toLowerCase()));
+    const extras = localTasks.filter(
+      t => t.status === 'open' && !alexaTitles.has(t.title.toLowerCase())
+    );
+
+    setTodoItems(alexaItems);
+    setLocalOnlyTasks(extras);
     setState('dashboard');
   }, []);
 
@@ -81,6 +92,9 @@ function App(): ReactElement {
                 <TaskCard title="Make dashboard app" priority="high" />
                 {todoItems.map(item => (
                   <TaskCard key={item.itemId} title={item.itemName} priority="medium" />
+                ))}
+                {localOnlyTasks.map(task => (
+                  <TaskCard key={`local-${task.id}`} title={task.title} priority={task.priority} />
                 ))}
               </div>
             </div>

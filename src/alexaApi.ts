@@ -40,6 +40,26 @@ export async function getLists(): Promise<AlexaList[]> {
   return data.listInfoList ?? [];
 }
 
+export type Priority = 'high' | 'medium' | 'low';
+
+export interface LocalTask {
+  id: number;
+  title: string;
+  status: string;
+  priority: Priority;
+  source_type: string;
+}
+
+export async function getTasks(): Promise<LocalTask[]> {
+  const res = await fetch(`${BASE_URL}/api/tasks`);
+  if (!res.ok) throw new Error('Failed to fetch local tasks');
+  const data: Array<LocalTask & { priority: string }> = await res.json();
+  return data.map(t => ({
+    ...t,
+    priority: (['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
+  }));
+}
+
 export async function getListItems(listId: string): Promise<AlexaItem[]> {
   const res = await fetch(`${BASE_URL}/lists/${listId}/items`);
   if (!res.ok) throw new Error('Failed to fetch items');
