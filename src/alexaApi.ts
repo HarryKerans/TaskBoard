@@ -14,6 +14,13 @@ export interface AlexaItem {
   [key: string]: unknown;
 }
 
+export async function checkAuthStatus(): Promise<boolean> {
+  const res = await fetch(`${BASE_URL}/auth/status`);
+  if (!res.ok) return false;
+  const data = await res.json();
+  return data.authenticated === true;
+}
+
 export async function login(otp: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/auth/login`, {
     method: 'POST',

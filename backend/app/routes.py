@@ -28,6 +28,16 @@ def set_state(session, login_data, credentials):
 def _echo_api() -> AmazonEchoApi:
     return make_echo_api(_session, _login_data, _credentials)
 
+
+def _is_authenticated() -> bool:
+    return _session is not None and _login_data is not None and _credentials is not None
+
+
+@router.get("/auth/status")
+async def auth_status():
+    """Check whether a valid session already exists."""
+    return {"authenticated": _is_authenticated()}
+
 class LoginRequest(BaseModel):
     otp: str
     

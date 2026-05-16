@@ -1,16 +1,37 @@
-import { useState, useCallback, type ReactElement } from 'react';
-import { login, getLists, getListItems, type AlexaItem } from './alexaApi.ts';
+import { useState, useCallback, useEffect, type ReactElement } from 'react';
+import { login, getLists, getListItems, checkAuthStatus, type AlexaItem } from './alexaApi.ts';
 import TaskCard from './TaskCard.tsx';
 import './App.css';
 
-type AppState = 'login' | 'dashboard';
+type AppState = 'loading' | 'login' | 'dashboard';
 
 function App(): ReactElement {
-  const [state, setState] = useState<AppState>('login');
+  const [state, setState] = useState<AppState>('loading');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [otp, setOtp] = useState('');
   const [todoItems, setTodoItems] = useState<AlexaItem[]>([]);
+
+  const loadDashboard = useCallback(async () => {
+    const lists = await getLists();
+    const todoList = lists.find(l => l.listType === 'TODO');
+    if (todoList) {
+      const items = await getListItems(todoList.listId);
+      setTodoItems(items);
+    }
+    setState('dashboard');
+  }, []);
+
+  // On mount: check if a session already exists
+  useEffect(() => {
+    checkAuthStatus().then(authenticated => {
+      if (authenticated) {
+        loadDashboard().catch(() => setState('login'));
+      } else {
+        setState('login');
+      }
+    });
+  }, [loadDashboard]);
 
   const handleLogin = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,25 +39,23 @@ function App(): ReactElement {
     setLoading(true);
     try {
       await login(otp);
-
-      const lists = await getLists();
-      const todoList = lists.find(l => l.listType === 'TODO');
-      if (todoList) {
-        const items = await getListItems(todoList.listId);
-        setTodoItems(items);
-      }
-
-      setState('dashboard');
+      await loadDashboard();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
     }
-  }, [otp]);
+  }, [otp, loadDashboard]);
 
   return (
     <div className="App">
       <main className={state === 'dashboard' ? 'App-main App-main--dashboard' : 'App-main'}>
+        {state === 'loading' && (
+          <div className="panel">
+            <p className="panel__subtitle">Loading…</p>
+          </div>
+        )}
+
         {state === 'login' && (
           <div className="panel">
             <h1 className="panel__title">Alexa To-Do</h1>
