@@ -56,7 +56,7 @@ export async function getTasks(): Promise<LocalTask[]> {
   const data: Array<LocalTask & { priority: string }> = await res.json();
   return data.map(t => ({
     ...t,
-    priority: (['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium') as Priority,
+    priority: (['high', 'medium', 'low'].includes(t.priority.toLowerCase()) ? t.priority.toLowerCase() : 'medium') as Priority,
   }));
 }
 

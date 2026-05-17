@@ -101,7 +101,7 @@ def create_task(task: TaskCreate) -> dict[str, Any]:
             INSERT INTO tasks (title, status, priority, source_type)
             VALUES (?, 'open', ?, 'manual')
             """,
-            (task.title, task.priority),
+            (task.title, task.priority.lower()),
         )
 
         task_id = cursor.lastrowid
