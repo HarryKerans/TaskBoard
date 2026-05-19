@@ -2,7 +2,7 @@ import os
 import sqlite3
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import logging
 from contextlib import asynccontextmanager
@@ -111,6 +111,23 @@ def create_task(task: TaskCreate) -> dict[str, Any]:
             (task_id,),
         ).fetchone()
 
+    return dict(row)
+
+
+@app.patch("/api/tasks/{task_id}")
+def update_task_status(task_id: int) -> dict[str, Any]:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE tasks SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (task_id,),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT id, title, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
     return dict(row)
 
 

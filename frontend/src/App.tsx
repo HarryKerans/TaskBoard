@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, getLists, getListItems, getTasks, checkAuthStatus, type AlexaItem, type LocalTask } from './alexaApi';
+import { login, getLists, getListItems, getTasks, checkAuthStatus, markTaskDone, type AlexaItem, type LocalTask } from './alexaApi';
 import TaskCard from './TaskCard';
 import './App.css';
 
@@ -12,14 +12,22 @@ function App(): ReactElement {
   const [otp, setOtp] = useState('');
   const [todoItems, setTodoItems] = useState<AlexaItem[]>([]);
   const [localOnlyTasks, setLocalOnlyTasks] = useState<LocalTask[]>([]);
+  const [alexaEnabled, setAlexaEnabled] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [marking, setMarking] = useState(false);
 
-  const loadDashboard = useCallback(async () => {
-    const [lists, localTasks] = await Promise.all([getLists(), getTasks()]);
+  const loadDashboard = useCallback(async (withAlexa = true) => {
+    const [lists, localTasks] = await Promise.all([
+      withAlexa ? getLists() : Promise.resolve([]),
+      getTasks(),
+    ]);
 
     let alexaItems: AlexaItem[] = [];
-    const todoList = lists.find(l => l.listType === 'TODO');
-    if (todoList) {
-      alexaItems = await getListItems(todoList.listId);
+    if (withAlexa) {
+      const todoList = lists.find(l => l.listType === 'TODO');
+      if (todoList) {
+        alexaItems = await getListItems(todoList.listId);
+      }
     }
 
     // Deduplicate: only show local tasks whose title doesn't already appear in Alexa list
@@ -37,7 +45,7 @@ function App(): ReactElement {
   useEffect(() => {
     checkAuthStatus().then(authenticated => {
       if (authenticated) {
-        loadDashboard().catch(() => setState('login'));
+        loadDashboard(true).catch(() => setState('login'));
       } else {
         setState('login');
       }
@@ -50,13 +58,47 @@ function App(): ReactElement {
     setLoading(true);
     try {
       await login(otp);
-      await loadDashboard();
+      await loadDashboard(true);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
     }
   }, [otp, loadDashboard]);
+
+  const handleLocalOnly = useCallback(async () => {
+    setAlexaEnabled(false);
+    setError('');
+    setLoading(true);
+    try {
+      await loadDashboard(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadDashboard]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(Array.from(prev));
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleMarkDone = useCallback(async () => {
+    setMarking(true);
+    // Only local tasks (prefixed "local-") can be marked done via the API
+    const localIds = Array.from(selectedIds)
+      .filter(id => id.startsWith('local-'))
+      .map(id => parseInt(id.replace('local-', ''), 10));
+    await Promise.all(localIds.map(id => markTaskDone(id)));
+    setSelectedIds(new Set());
+    setMarking(false);
+    // Refresh dashboard to remove completed tasks
+    await loadDashboard(alexaEnabled);
+  }, [selectedIds, alexaEnabled, loadDashboard]);
 
   return (
     <div className="App">
@@ -81,23 +123,49 @@ function App(): ReactElement {
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
             </form>
+            <button className="btn btn--secondary" onClick={handleLocalOnly} disabled={loading}>
+              Continue without Alexa
+            </button>
           </div>
         )}
 
         {state === 'dashboard' && (
           <div className="panel panel--full">
             <h1 className="dashboard__title">To Do List</h1>
+            {!alexaEnabled && (
+              <p className="dashboard__notice">Showing local tasks only — not connected to Alexa</p>
+            )}
             <div className="dashboard">
               <div className="container">
-                <TaskCard title="Make dashboard app" priority="high" />
                 {todoItems.map(item => (
-                  <TaskCard key={item.itemId} title={item.itemName} priority="medium" />
+                  <TaskCard
+                    key={item.itemId}
+                    id={`alexa-${item.itemId}`}
+                    title={item.itemName}
+                    priority="medium"
+                    selected={selectedIds.has(`alexa-${item.itemId}`)}
+                    onToggle={toggleSelect}
+                  />
                 ))}
                 {localOnlyTasks.map(task => (
-                  <TaskCard key={`local-${task.id}`} title={task.title} priority={task.priority} />
+                  <TaskCard
+                    key={`local-${task.id}`}
+                    id={`local-${task.id}`}
+                    title={task.title}
+                    priority={task.priority}
+                    selected={selectedIds.has(`local-${task.id}`)}
+                    onToggle={toggleSelect}
+                  />
                 ))}
               </div>
             </div>
+            {selectedIds.size > 0 && (
+              <div className="mark-done-bar">
+                <button className="btn btn--done" onClick={handleMarkDone} disabled={marking}>
+                  {marking ? 'Saving…' : `Mark as done (${selectedIds.size})`}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </main>

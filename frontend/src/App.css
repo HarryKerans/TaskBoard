@@ -20,14 +20,36 @@
 
 .task-card {
   width: min(100%, 420px);
-  display: grid;
-  gap: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
   padding: 24px;
   background: #ffffff;
   border: 1px solid #d9e1ee;
   border-radius: 8px;
   box-shadow: 0 18px 45px rgba(23, 32, 51, 0.12);
   text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.task-card--selected {
+  border-color: #4a90d9;
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.2);
+}
+
+.task-card__checkbox {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #172033;
+}
+
+.task-card__body {
+  flex: 1;
+  display: grid;
+  gap: 24px;
 }
 
 .task-card__label,
@@ -166,6 +188,19 @@
   cursor: not-allowed;
 }
 
+.btn--secondary {
+  background: transparent;
+  color: #68738a;
+  border: 1px solid #d9e1ee;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: #f5f7fb;
+  color: #172033;
+}
+
 /* ---- Dashboard ---- */
 .dashboard {
   display: flex;
@@ -180,6 +215,12 @@
   align-self: center;
 }
 
+.dashboard__notice {
+  margin: -16px 0 16px;
+  font-size: 0.8rem;
+  color: #68738a;
+}
+
 .container {
   display: flex;
   flex-direction: column;
@@ -188,6 +229,29 @@
   flex-wrap: wrap;
   gap: 20px;
   width: 100%;
+}
+
+.mark-done-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  z-index: 100;
+}
+
+.btn--done {
+  background: #172033;
+  color: #fff;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(23, 32, 51, 0.3);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.btn--done:hover:not(:disabled) {
+  opacity: 0.85;
+  transform: translateY(-1px);
 }
 
 

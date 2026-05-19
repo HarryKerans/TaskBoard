@@ -65,3 +65,8 @@ export async function getListItems(listId: string): Promise<AlexaItem[]> {
   if (!res.ok) throw new Error('Failed to fetch items');
   return res.json();
 }
+
+export async function markTaskDone(id: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/tasks/${id}`, { method: 'PATCH' });
+  if (!res.ok) throw new Error(`Failed to mark task ${id} as done`);
+}
