@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, getLists, getListItems, getTasks, checkAuthStatus, type AlexaItem, type LocalTask } from './alexaApi.ts';
-import TaskCard from './TaskCard.tsx';
+import { login, getLists, getListItems, getTasks, checkAuthStatus, type AlexaItem, type LocalTask } from './alexaApi';
+import TaskCard from './TaskCard';
 import './App.css';
 
 type AppState = 'loading' | 'login' | 'dashboard';
