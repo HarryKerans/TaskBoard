@@ -30,5 +30,9 @@ backend/app/pyalexatodo/models/__pycache__
 backend/__pycache__/
 .env
 
+# Local dev SQLite database
+backend/tasks.dev.db
+*.dev.db
+
 # API docs
 backend/docs

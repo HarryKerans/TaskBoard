@@ -23,6 +23,7 @@ BUILD_DIR = Path(__file__).parent.parent / "build"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    initialise_database()
     session = ClientSession()
     set_state(session, None, None)
     yield
@@ -62,11 +63,6 @@ def initialise_database() -> None:
             """
         )
         connection.commit()
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    initialise_database()
 
 
 @app.get("/api/health")
