@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, getLists, getListItems, getTasks, checkAuthStatus, markTaskDone, type AlexaItem, type LocalTask } from './alexaApi';
+import { login, getLists, getListItems, getTasks, checkAuthStatus, markTaskDone, markAlexaItemDone, type AlexaItem, type LocalTask } from './alexaApi';
 import TaskCard from './TaskCard';
 import './App.css';
 
@@ -89,16 +89,26 @@ function App(): ReactElement {
 
   const handleMarkDone = useCallback(async () => {
     setMarking(true);
-    // Only local tasks (prefixed "local-") can be marked done via the API
-    const localIds = Array.from(selectedIds)
-      .filter(id => id.startsWith('local-'))
-      .map(id => parseInt(id.replace('local-', ''), 10));
-    await Promise.all(localIds.map(id => markTaskDone(id)));
+    const ops: Promise<void>[] = [];
+
+    for (const id of Array.from(selectedIds)) {
+      if (id.startsWith('local-')) {
+        const taskId = parseInt(id.replace('local-', ''), 10);
+        ops.push(markTaskDone(taskId));
+      } else if (id.startsWith('alexa-')) {
+        const itemId = id.replace('alexa-', '');
+        const item = todoItems.find(i => i.itemId === itemId);
+        if (item) {
+          ops.push(markAlexaItemDone(item.listId, item.itemId, item.version));
+        }
+      }
+    }
+
+    await Promise.all(ops);
     setSelectedIds(new Set());
     setMarking(false);
-    // Refresh dashboard to remove completed tasks
     await loadDashboard(alexaEnabled);
-  }, [selectedIds, alexaEnabled, loadDashboard]);
+  }, [selectedIds, todoItems, alexaEnabled, loadDashboard]);
 
   return (
     <div className="App">

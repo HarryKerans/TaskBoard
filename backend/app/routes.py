@@ -118,3 +118,28 @@ async def get_list_items(list_id: str):
             break
 
     return all_items
+
+
+@router.patch("/lists/{list_id}/items/{item_id}")
+async def mark_alexa_item_done(list_id: str, item_id: str, body: dict):
+    """Mark an Alexa list item as complete."""
+    version = body.get("version")
+    if version is None:
+        raise HTTPException(status_code=400, detail="version is required")
+    echo_api = _echo_api()
+    base_url = f"https://www.amazon.{echo_api.domain}"
+    response = await amazon_request(
+        echo_api,
+        HTTPMethod.PUT,
+        f"{base_url}/alexashoppinglists/api/v2/lists/{list_id}/items/{item_id}?version={version}",
+        {
+            "itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}],
+            "itemAttributesToRemove": [],
+        },
+    )
+    if response.status >= 300:
+        body = await response.text()
+        logger.error("Amazon mark-done failed: status=%s body=%s", response.status, body)
+        raise HTTPException(status_code=response.status, detail="Failed to mark Alexa item as done")
+    logger.info("Marked Alexa item %s in list %s as done (status %s)", item_id, list_id, response.status)
+    return {"status": "ok"}

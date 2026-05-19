@@ -11,6 +11,8 @@ export interface AlexaItem {
   itemId: string;
   itemName: string;
   itemStatus: string;
+  version: number;
+  listId: string;          // injected client-side after fetch
   [key: string]: unknown;
 }
 
@@ -63,7 +65,19 @@ export async function getTasks(): Promise<LocalTask[]> {
 export async function getListItems(listId: string): Promise<AlexaItem[]> {
   const res = await fetch(`${BASE_URL}/lists/${listId}/items`);
   if (!res.ok) throw new Error('Failed to fetch items');
-  return res.json();
+  const items: AlexaItem[] = await res.json();
+  return items
+    .filter(item => item.itemStatus !== 'COMPLETE')
+    .map(item => ({ ...item, listId }));
+}
+
+export async function markAlexaItemDone(listId: string, itemId: string, version: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/lists/${listId}/items/${itemId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version }),
+  });
+  if (!res.ok) throw new Error(`Failed to mark Alexa item ${itemId} as done`);
 }
 
 export async function markTaskDone(id: number): Promise<void> {
