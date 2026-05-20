@@ -18,6 +18,5 @@ echo "Using database path: ${DATABASE_PATH}"
 cd /app/backend
 
 exec /app/backend/.venv/bin/uvicorn app.main:app \
-  --app-dir /app/backend \
   --host 0.0.0.0 \
   --port 8000

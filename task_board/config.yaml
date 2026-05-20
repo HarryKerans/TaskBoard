@@ -1,0 +1,34 @@
+name: "Task Board"
+description: "A simple task board application built with FastAPI and SQLite."
+version: "0.2.0"
+slug: "task_board"
+init: false
+
+arch:
+  - aarch64
+  - amd64
+
+startup: application
+boot: manual
+
+ports:
+  8000/tcp: 8099
+
+map:
+  - data:rw
+
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:latest
+  amd64: ghcr.io/home-assistant/amd64-base:latest
+
+options:
+  database_path: "/data/tasks.db"
+  amazon_email: ""
+  amazon_password: ""
+  amazon_country: "co.uk"
+
+schema:
+  database_path: str
+  amazon_email: str
+  amazon_password: str
+  amazon_country: str
