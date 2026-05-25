@@ -39,23 +39,24 @@ def _cache_clear() -> None:
     _cache.clear()
 
 
-def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
+def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> tuple[list[dict], list[dict]]:
     """Upsert Alexa items into the local DB, storing Alexa metadata for rename support.
 
     Also marks any open Alexa-sourced tasks as done if they no longer appear in the
     live list — meaning they were completed from another device (phone, Echo, etc.).
 
-    Returns a list of {item_id, list_id, version} dicts for items that are locally
-    'done' but still active in Alexa, so the caller can reconcile them.
+    Returns a tuple of:
+      - needs_completion: [{item_id, list_id, version}] locally-done items still active in Alexa
+      - needs_rename:     [{item_id, list_id, version, new_title}] locally-renamed items to push
     """
     live_item_ids = {item.get("itemId") for item in items if item.get("itemId")}
 
     with get_connection() as conn:
-        # Index existing alexa tasks by alexa_item_id, including their status
+        # Index existing alexa tasks by alexa_item_id, including their status and title
         existing_by_alexa_id: dict[str, dict] = {
             row["alexa_item_id"]: dict(row)
             for row in conn.execute(
-                "SELECT id, alexa_item_id, status, alexa_version FROM tasks "
+                "SELECT id, title, alexa_item_id, status, alexa_version FROM tasks "
                 "WHERE source_type = 'alexa' AND alexa_item_id IS NOT NULL"
             ).fetchall()
         }
@@ -66,6 +67,7 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
         }
         new_count = 0
         needs_alexa_completion: list[dict] = []
+        needs_alexa_rename: list[dict] = []
 
         for item in items:
             raw_title = item.get("itemName", "").strip()
@@ -73,7 +75,7 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
             version = item.get("version")
             if not raw_title or not item_id:
                 continue
-            title = raw_title[:1].upper() + raw_title[1:]
+            alexa_title = raw_title[:1].upper() + raw_title[1:]
 
             if item_id in existing_by_alexa_id:
                 local = existing_by_alexa_id[item_id]
@@ -82,27 +84,38 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
                     needs_alexa_completion.append(
                         {"item_id": item_id, "list_id": list_id, "version": version}
                     )
-                else:
-                    # Update version and title in case they changed on the Alexa side
-                    conn.execute(
-                        "UPDATE tasks SET title = ?, alexa_version = ?, alexa_list_id = ?, "
-                        "updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
-                        (title, version, list_id, item_id),
+                elif local["title"] != alexa_title:
+                    # Title differs — local edit takes priority; push rename to Alexa
+                    needs_alexa_rename.append(
+                        {"item_id": item_id, "list_id": list_id, "version": version, "new_title": local["title"]}
                     )
-            elif title.lower() in existing_titles:
+                    # Only update version metadata, not the title
+                    conn.execute(
+                        "UPDATE tasks SET alexa_version = ?, alexa_list_id = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
+                        (version, list_id, item_id),
+                    )
+                else:
+                    # In sync — update version in case it incremented on Alexa side
+                    conn.execute(
+                        "UPDATE tasks SET alexa_version = ?, alexa_list_id = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
+                        (version, list_id, item_id),
+                    )
+            elif alexa_title.lower() in existing_titles:
                 # Pre-metadata row — backfill alexa columns
                 conn.execute(
                     "UPDATE tasks SET alexa_item_id = ?, alexa_list_id = ?, alexa_version = ? "
                     "WHERE lower(title) = lower(?) AND source_type = 'alexa'",
-                    (item_id, list_id, version, title),
+                    (item_id, list_id, version, alexa_title),
                 )
             else:
                 conn.execute(
                     "INSERT INTO tasks (title, status, priority, source_type, alexa_item_id, alexa_list_id, alexa_version) "
                     "VALUES (?, 'open', 'medium', 'alexa', ?, ?, ?)",
-                    (title, item_id, list_id, version),
+                    (alexa_title, item_id, list_id, version),
                 )
-                existing_titles.add(title.lower())
+                existing_titles.add(alexa_title.lower())
                 new_count += 1
 
         # Mark done any open Alexa tasks that are no longer in the live list —
@@ -120,8 +133,10 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
     if closed:
         logger.debug("Marked %d Alexa task(s) done (completed elsewhere): %s",
                      len(closed), [r[0] for r in closed])
+    if needs_alexa_rename:
+        logger.debug("%d offline rename(s) queued to push to Alexa", len(needs_alexa_rename))
     logger.debug("Synced %d new Alexa items to local DB", new_count)
-    return needs_alexa_completion
+    return needs_alexa_completion, needs_alexa_rename
 
 
 def set_state(session, login_data, credentials):
@@ -195,7 +210,7 @@ async def sync_alexa():
 
     # Only sync active (non-complete) items
     active_items = [i for i in all_items if i.get("itemStatus") != "COMPLETE"]
-    needs_completion = _sync_alexa_items_to_db(list_id, active_items)
+    needs_completion, needs_rename = _sync_alexa_items_to_db(list_id, active_items)
     _cache_set(f"items:{list_id}", active_items)
 
     # Reconcile any tasks marked done locally while offline
@@ -211,6 +226,19 @@ async def sync_alexa():
                 logger.info("Reconciled offline completion of Alexa item %s", pending["item_id"])
             except Exception as exc:
                 logger.warning("Could not reconcile Alexa completion for %s: %s", pending["item_id"], exc)
+
+    # Reconcile any tasks renamed locally while offline — push new title to Alexa
+    for pending in needs_rename:
+        try:
+            await amazon_request(
+                echo_api,
+                HTTPMethod.PUT,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
+                {"itemAttributesToUpdate": [{"type": "itemName", "value": pending["new_title"]}], "itemAttributesToRemove": []},
+            )
+            logger.info("Reconciled offline rename of Alexa item %s → '%s'", pending["item_id"], pending["new_title"])
+        except Exception as exc:
+            logger.warning("Could not reconcile rename for Alexa item %s: %s", pending["item_id"], exc)
 
     logger.info("Sync complete: %d active Alexa items", len(active_items))
     return {"synced": len(active_items)}
@@ -308,24 +336,35 @@ async def get_list_items(list_id: str):
         if not next_token:
             break
 
-    needs_completion = _sync_alexa_items_to_db(list_id, all_items)
+    needs_completion, needs_rename = _sync_alexa_items_to_db(list_id, all_items)
 
     # Reconcile offline completions: push to Alexa any tasks marked done locally
     # while we didn't have an active session.
-    if needs_completion:
-        echo_api = _echo_api()
-        base_url = f"https://www.amazon.{echo_api.domain}"
+    if needs_completion or needs_rename:
+        echo_api_reconcile = _echo_api()
+        base_url_reconcile = f"https://www.amazon.{echo_api_reconcile.domain}"
         for pending in needs_completion:
             try:
                 await amazon_request(
-                    echo_api,
+                    echo_api_reconcile,
                     HTTPMethod.PUT,
-                    f"{base_url}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
+                    f"{base_url_reconcile}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
                     {"itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}], "itemAttributesToRemove": []},
                 )
                 logger.info("Reconciled offline completion of Alexa item %s", pending["item_id"])
             except Exception as exc:
                 logger.warning("Could not reconcile Alexa completion for %s: %s", pending["item_id"], exc)
+        for pending in needs_rename:
+            try:
+                await amazon_request(
+                    echo_api_reconcile,
+                    HTTPMethod.PUT,
+                    f"{base_url_reconcile}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
+                    {"itemAttributesToUpdate": [{"type": "itemName", "value": pending["new_title"]}], "itemAttributesToRemove": []},
+                )
+                logger.info("Reconciled offline rename of Alexa item %s → '%s'", pending["item_id"], pending["new_title"])
+            except Exception as exc:
+                logger.warning("Could not reconcile rename for Alexa item %s: %s", pending["item_id"], exc)
 
     _cache_set(cache_key, all_items)
     return all_items
@@ -425,8 +464,10 @@ class TaskUpdate(BaseModel):
 
 @router.put("/api/tasks/{task_id}")
 async def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
-    """Update a task's title, description, and priority.
-    If the task is Alexa-sourced and the title changed, also rename it in Alexa."""
+    """Update a task's title, description, priority, and optionally created_at.
+    If the task is Alexa-sourced and the title changed, attempt to rename it in Alexa
+    immediately (requires an active session). If not authenticated the local DB is
+    updated anyway — the next sync will push the rename to Alexa."""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT id, title, source_type, alexa_item_id, alexa_list_id, alexa_version FROM tasks WHERE id = ?",
@@ -444,37 +485,32 @@ async def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
         alexa_list_id = row["alexa_list_id"]
         alexa_version = row["alexa_version"]
 
-        if not alexa_item_id or not alexa_list_id or alexa_version is None:
-            raise HTTPException(
-                status_code=409,
-                detail="Cannot rename Alexa item: missing metadata — open the app to trigger a sync first",
+        if _is_authenticated() and alexa_item_id and alexa_list_id and alexa_version is not None:
+            # Online: push rename to Alexa immediately
+            echo_api = _echo_api()
+            base_url = f"https://www.amazon.{echo_api.domain}"
+            response = await amazon_request(
+                echo_api,
+                HTTPMethod.PUT,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{alexa_list_id}/items/{alexa_item_id}?version={alexa_version}",
+                {
+                    "itemAttributesToUpdate": [{"type": "itemName", "value": update.title}],
+                    "itemAttributesToRemove": [],
+                },
             )
-        if not _is_authenticated():
-            raise HTTPException(
-                status_code=401,
-                detail="Not authenticated with Alexa — cannot rename Alexa item",
+            if response.status >= 300:
+                err_body = await response.text()
+                logger.error("Alexa rename failed: status=%s body=%s", response.status, err_body)
+                raise HTTPException(status_code=response.status, detail="Failed to rename item in Alexa")
+            logger.info("Renamed Alexa item %s to %r (list %s)", alexa_item_id, update.title, alexa_list_id)
+            new_alexa_version = alexa_version + 1
+            _cache.pop(f"items:{alexa_list_id}", None)
+        else:
+            # Offline: save locally — sync on next login will push the rename to Alexa
+            logger.info(
+                "Offline edit: renamed Alexa task %d locally to %r — will sync to Alexa on next login",
+                task_id, update.title,
             )
-
-        echo_api = _echo_api()
-        base_url = f"https://www.amazon.{echo_api.domain}"
-        response = await amazon_request(
-            echo_api,
-            HTTPMethod.PUT,
-            f"{base_url}/alexashoppinglists/api/v2/lists/{alexa_list_id}/items/{alexa_item_id}?version={alexa_version}",
-            {
-                "itemAttributesToUpdate": [{"type": "itemName", "value": update.title}],
-                "itemAttributesToRemove": [],
-            },
-        )
-        if response.status >= 300:
-            err_body = await response.text()
-            logger.error("Alexa rename failed: status=%s body=%s", response.status, err_body)
-            raise HTTPException(status_code=response.status, detail="Failed to rename item in Alexa")
-
-        logger.info("Renamed Alexa item %s to %r (list %s)", alexa_item_id, update.title, alexa_list_id)
-        new_alexa_version = alexa_version + 1
-        # Invalidate the list cache so the next fetch returns fresh data
-        _cache.pop(f"items:{alexa_list_id}", None)
 
     with get_connection() as conn:
         conn.execute(
