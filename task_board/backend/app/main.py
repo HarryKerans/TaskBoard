@@ -49,6 +49,7 @@ def initialise_database() -> None:
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'open',
                 priority TEXT NOT NULL DEFAULT 'medium',
                 source_type TEXT NOT NULL DEFAULT 'manual',
@@ -57,6 +58,11 @@ def initialise_database() -> None:
             )
             """
         )
+        # Migrate existing databases that predate the description column
+        try:
+            connection.execute("ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         connection.commit()
 
 
@@ -75,7 +81,7 @@ def list_tasks() -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT id, title, status, priority, source_type, created_at, updated_at
+            SELECT id, title, description, status, priority, source_type, created_at, updated_at
             FROM tasks
             ORDER BY id DESC
             """
@@ -99,7 +105,7 @@ def create_task(task: TaskCreate) -> dict[str, Any]:
 
         row = connection.execute(
             """
-            SELECT id, title, status, priority, source_type, created_at, updated_at
+            SELECT id, title, description, status, priority, source_type, created_at, updated_at
             FROM tasks
             WHERE id = ?
             """,
@@ -118,7 +124,30 @@ def update_task_status(task_id: int) -> dict[str, Any]:
         )
         connection.commit()
         row = connection.execute(
-            "SELECT id, title, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
+            "SELECT id, title, description, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return dict(row)
+
+
+class TaskUpdate(BaseModel):
+    title: str
+    description: str = ''
+    priority: str = 'medium'
+
+
+@app.put("/api/tasks/{task_id}")
+def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE tasks SET title = ?, description = ?, priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (update.title, update.description, update.priority.lower(), task_id),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT id, title, description, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
     if row is None:

@@ -47,6 +47,7 @@ export type Priority = 'high' | 'medium' | 'low';
 export interface LocalTask {
   id: number;
   title: string;
+  description: string;
   status: string;
   priority: Priority;
   source_type: string;
@@ -83,4 +84,16 @@ export async function markAlexaItemDone(listId: string, itemId: string, version:
 export async function markTaskDone(id: number): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}`, { method: 'PATCH' });
   if (!res.ok) throw new Error(`Failed to mark task ${id} as done`);
+}
+
+export async function updateTask(
+  id: number,
+  updates: { title: string; description: string; priority: Priority },
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/tasks/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update task ${id}`);
 }

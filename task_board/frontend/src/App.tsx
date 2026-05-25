@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, getLists, getListItems, getTasks, checkAuthStatus, markTaskDone, markAlexaItemDone, type AlexaItem, type LocalTask } from './alexaApi';
+import { login, getLists, getListItems, getTasks, checkAuthStatus, markTaskDone, markAlexaItemDone, updateTask, type AlexaItem, type LocalTask, type Priority } from './alexaApi';
 import TaskCard from './TaskCard';
+import EditTaskModal from './EditTaskModal';
 import './App.css';
 
 type AppState = 'loading' | 'login' | 'dashboard';
@@ -15,6 +16,7 @@ function App(): ReactElement {
   const [alexaEnabled, setAlexaEnabled] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [marking, setMarking] = useState(false);
+  const [editingTask, setEditingTask] = useState<LocalTask | null>(null);
 
   const loadDashboard = useCallback(async (withAlexa = true) => {
     const [lists, localTasks] = await Promise.all([
@@ -86,6 +88,13 @@ function App(): ReactElement {
       return next;
     });
   }, []);
+
+  const handleSaveEdit = useCallback(async (updates: { title: string; description: string; priority: Priority }) => {
+    if (!editingTask) return;
+    await updateTask(editingTask.id, updates);
+    setEditingTask(null);
+    await loadDashboard(alexaEnabled);
+  }, [editingTask, alexaEnabled, loadDashboard]);
 
   const handleMarkDone = useCallback(async () => {
     setMarking(true);
@@ -165,6 +174,7 @@ function App(): ReactElement {
                     priority={task.priority}
                     selected={selectedIds.has(`local-${task.id}`)}
                     onToggle={toggleSelect}
+                    onEdit={() => setEditingTask(task)}
                   />
                 ))}
               </div>
@@ -179,6 +189,13 @@ function App(): ReactElement {
           </div>
         )}
       </main>
+      {editingTask && (
+        <EditTaskModal
+          task={editingTask}
+          onSave={handleSaveEdit}
+          onClose={() => setEditingTask(null)}
+        />
+      )}
     </div>
   );
 }
