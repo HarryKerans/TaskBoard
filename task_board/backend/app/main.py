@@ -139,7 +139,10 @@ if FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}")
     def serve_react_app(full_path: str):
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(
+            FRONTEND_DIST / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 else:
     @app.get("/")
     def root() -> dict[str, str]:
