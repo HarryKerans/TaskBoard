@@ -20,10 +20,7 @@ function App(): ReactElement {
   const [alexaItemToTask, setAlexaItemToTask] = useState<Map<string, LocalTask>>(new Map());
 
   const loadDashboard = useCallback(async (withAlexa = true) => {
-    const [lists, localTasks] = await Promise.all([
-      withAlexa ? getLists() : Promise.resolve([]),
-      getTasks(),
-    ]);
+    const lists = await (withAlexa ? getLists() : Promise.resolve([]));
 
     let alexaItems: AlexaItem[] = [];
     if (withAlexa) {
@@ -32,6 +29,10 @@ function App(): ReactElement {
         alexaItems = await getListItems(todoList.listId);
       }
     }
+
+    // getTasks is called AFTER getListItems so the DB sync has already run
+    // and alexa_item_id is populated — required to build the edit button map.
+    const localTasks = await getTasks();
 
     // Deduplicate: only show local tasks whose title doesn't already appear in Alexa list
     const alexaTitles = new Set(alexaItems.map(i => i.itemName.toLowerCase()));
