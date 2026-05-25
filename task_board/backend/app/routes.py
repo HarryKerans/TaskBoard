@@ -1,12 +1,14 @@
 import logging
+import time
 from http import HTTPMethod
+from typing import Any
 
 from aioamazondevices.api import AmazonEchoApi
 from aioamazondevices.exceptions import CannotAuthenticate, CannotConnect, CannotRetrieveData
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.helpers import amazon_request, make_echo_api, get_settings
+from app.helpers import amazon_request, make_echo_api, get_settings, get_connection
 
 logger = logging.getLogger("alexa_api")
 
@@ -16,6 +18,50 @@ router = APIRouter()
 _session = None
 _login_data = None
 _credentials = None
+
+# In-memory TTL cache for Alexa API responses (keyed by route)
+_CACHE_TTL = 3600  # seconds (1 hour)
+_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cache_get(key: str) -> Any | None:
+    entry = _cache.get(key)
+    if entry and time.monotonic() - entry[0] < _CACHE_TTL:
+        return entry[1]
+    return None
+
+
+def _cache_set(key: str, data: Any) -> None:
+    _cache[key] = (time.monotonic(), data)
+
+
+def _cache_clear() -> None:
+    _cache.clear()
+
+
+def _sync_alexa_items_to_db(items: list[dict]) -> None:
+    """Insert Alexa items into the local DB, skipping titles that already exist."""
+    with get_connection() as conn:
+        existing = {
+            row[0].lower()
+            for row in conn.execute("SELECT title FROM tasks").fetchall()
+        }
+        new_count = 0
+        for item in items:
+            raw_title = item.get("itemName", "").strip()
+            if not raw_title:
+                continue
+            title = raw_title[:1].upper() + raw_title[1:]
+            if title.lower() in existing:
+                continue
+            conn.execute(
+                "INSERT INTO tasks (title, status, priority, source_type) VALUES (?, 'open', 'medium', 'alexa')",
+                (title,),
+            )
+            existing.add(title.lower())
+            new_count += 1
+        conn.commit()
+    logger.debug("Synced %d new Alexa items to local DB", new_count)
 
 
 def set_state(session, login_data, credentials):
@@ -76,6 +122,7 @@ async def login(body: LoginRequest):
         "password": password,
         "country_code": country_code,
     })
+    _cache_clear()
 
     logger.info("Login successful for %s", email)
     return {"status": "ok"}
@@ -83,16 +130,29 @@ async def login(body: LoginRequest):
 
 @router.get("/lists")
 async def get_lists():
-    """Return all Alexa shopping/todo lists."""
+    """Return all Alexa shopping/todo lists (cached for 1 hour)."""
+    cached = _cache_get("lists")
+    if cached is not None:
+        logger.debug("Returning cached lists")
+        return cached
+
     echo_api = _echo_api()
     base_url = f"https://www.amazon.{echo_api.domain}"
     response = await amazon_request(echo_api, HTTPMethod.POST, f"{base_url}/alexashoppinglists/api/v2/lists/fetch")
-    return await response.json()
+    data = await response.json()
+    _cache_set("lists", data)
+    return data
 
 
 @router.get("/lists/{list_id}/items")
 async def get_list_items(list_id: str):
-    """Return all items in a given list, handling pagination."""
+    """Return all items in a given list, handling pagination (cached for 1 hour)."""
+    cache_key = f"items:{list_id}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        logger.debug("Returning cached items for list %s", list_id)
+        return cached
+
     echo_api = _echo_api()
     base_url = f"https://www.amazon.{echo_api.domain}"
 
@@ -117,6 +177,8 @@ async def get_list_items(list_id: str):
         if not next_token:
             break
 
+    _sync_alexa_items_to_db(all_items)
+    _cache_set(cache_key, all_items)
     return all_items
 
 

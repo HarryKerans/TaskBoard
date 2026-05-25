@@ -25,6 +25,7 @@ task_board/backend/.env
 # Local dev SQLite database
 task_board/backend/tasks.dev.db
 *.dev.db
+tasks.db
 
 # Reference docs (pyalexatodo clone, not part of the add-on)
 task_board/backend/docs/

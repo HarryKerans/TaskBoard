@@ -1,4 +1,3 @@
-import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -6,13 +5,17 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import logging
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from aiohttp import ClientSession
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.routes import router, set_state
+from app.helpers import DATABASE_PATH, get_connection
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+# find_dotenv() walks up the directory tree to find a .env file, so local dev
+# works regardless of where .env lives. override=False (default) means real
+# env vars set by HA's run.sh always take precedence over the file.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -30,7 +33,6 @@ async def lifespan(app: FastAPI):
     await session.close()
 
 
-DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "/data/tasks.db"))
 app = FastAPI(title="Task Dashboard", lifespan=lifespan)
 app.include_router(router)
 
@@ -38,13 +40,6 @@ class TaskCreate(BaseModel):
     title: str
     priority: str = 'medium'
 
-
-def get_connection() -> sqlite3.Connection:
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
 
 
 def initialise_database() -> None:
