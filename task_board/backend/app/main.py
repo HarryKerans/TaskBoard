@@ -63,6 +63,16 @@ def initialise_database() -> None:
             connection.execute("ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         except sqlite3.OperationalError:
             pass  # column already exists
+        # Alexa metadata — populated when items are synced from Alexa
+        for col_def in (
+            "ALTER TABLE tasks ADD COLUMN alexa_item_id TEXT DEFAULT NULL",
+            "ALTER TABLE tasks ADD COLUMN alexa_list_id TEXT DEFAULT NULL",
+            "ALTER TABLE tasks ADD COLUMN alexa_version INTEGER DEFAULT NULL",
+        ):
+            try:
+                connection.execute(col_def)
+            except sqlite3.OperationalError:
+                pass  # column already exists
         connection.commit()
 
 
@@ -121,29 +131,6 @@ def update_task_status(task_id: int) -> dict[str, Any]:
         connection.execute(
             "UPDATE tasks SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (task_id,),
-        )
-        connection.commit()
-        row = connection.execute(
-            "SELECT id, title, description, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
-            (task_id,),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return dict(row)
-
-
-class TaskUpdate(BaseModel):
-    title: str
-    description: str = ''
-    priority: str = 'medium'
-
-
-@app.put("/api/tasks/{task_id}")
-def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
-    with get_connection() as connection:
-        connection.execute(
-            "UPDATE tasks SET title = ?, description = ?, priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (update.title, update.description, update.priority.lower(), task_id),
         )
         connection.commit()
         row = connection.execute(

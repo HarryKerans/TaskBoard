@@ -39,27 +39,50 @@ def _cache_clear() -> None:
     _cache.clear()
 
 
-def _sync_alexa_items_to_db(items: list[dict]) -> None:
-    """Insert Alexa items into the local DB, skipping titles that already exist."""
+def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> None:
+    """Upsert Alexa items into the local DB, storing Alexa metadata for rename support."""
     with get_connection() as conn:
-        existing = {
+        # Index existing alexa tasks by alexa_item_id (fast path)
+        existing_by_alexa_id: dict[str, int] = {
+            row["alexa_item_id"]: row["id"]
+            for row in conn.execute(
+                "SELECT id, alexa_item_id FROM tasks WHERE source_type = 'alexa' AND alexa_item_id IS NOT NULL"
+            ).fetchall()
+        }
+        # Also track all titles for dedup on insert
+        existing_titles = {
             row[0].lower()
             for row in conn.execute("SELECT title FROM tasks").fetchall()
         }
         new_count = 0
         for item in items:
             raw_title = item.get("itemName", "").strip()
-            if not raw_title:
+            item_id = item.get("itemId", "")
+            version = item.get("version")
+            if not raw_title or not item_id:
                 continue
             title = raw_title[:1].upper() + raw_title[1:]
-            if title.lower() in existing:
-                continue
-            conn.execute(
-                "INSERT INTO tasks (title, status, priority, source_type) VALUES (?, 'open', 'medium', 'alexa')",
-                (title,),
-            )
-            existing.add(title.lower())
-            new_count += 1
+
+            if item_id in existing_by_alexa_id:
+                # Update version and title in case they changed on the Alexa side
+                conn.execute(
+                    "UPDATE tasks SET title = ?, alexa_version = ?, alexa_list_id = ?, updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
+                    (title, version, list_id, item_id),
+                )
+            elif title.lower() in existing_titles:
+                # Pre-metadata row — backfill alexa columns
+                conn.execute(
+                    "UPDATE tasks SET alexa_item_id = ?, alexa_list_id = ?, alexa_version = ? WHERE lower(title) = lower(?) AND source_type = 'alexa'",
+                    (item_id, list_id, version, title),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO tasks (title, status, priority, source_type, alexa_item_id, alexa_list_id, alexa_version) "
+                    "VALUES (?, 'open', 'medium', 'alexa', ?, ?, ?)",
+                    (title, item_id, list_id, version),
+                )
+                existing_titles.add(title.lower())
+                new_count += 1
         conn.commit()
     logger.debug("Synced %d new Alexa items to local DB", new_count)
 
@@ -177,7 +200,7 @@ async def get_list_items(list_id: str):
         if not next_token:
             break
 
-    _sync_alexa_items_to_db(all_items)
+    _sync_alexa_items_to_db(list_id, all_items)
     _cache_set(cache_key, all_items)
     return all_items
 
@@ -205,3 +228,76 @@ async def mark_alexa_item_done(list_id: str, item_id: str, body: dict):
         raise HTTPException(status_code=response.status, detail="Failed to mark Alexa item as done")
     logger.info("Marked Alexa item %s in list %s as done (status %s)", item_id, list_id, response.status)
     return {"status": "ok"}
+
+
+class TaskUpdate(BaseModel):
+    title: str
+    description: str = ''
+    priority: str = 'medium'
+
+
+@router.put("/api/tasks/{task_id}")
+async def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
+    """Update a task's title, description, and priority.
+    If the task is Alexa-sourced and the title changed, also rename it in Alexa."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, title, source_type, alexa_item_id, alexa_list_id, alexa_version FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    row = dict(row)
+    title_changed = row["title"] != update.title
+    new_alexa_version = row["alexa_version"]
+
+    if row["source_type"] == "alexa" and title_changed:
+        alexa_item_id = row["alexa_item_id"]
+        alexa_list_id = row["alexa_list_id"]
+        alexa_version = row["alexa_version"]
+
+        if not alexa_item_id or not alexa_list_id or alexa_version is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot rename Alexa item: missing metadata — open the app to trigger a sync first",
+            )
+        if not _is_authenticated():
+            raise HTTPException(
+                status_code=401,
+                detail="Not authenticated with Alexa — cannot rename Alexa item",
+            )
+
+        echo_api = _echo_api()
+        base_url = f"https://www.amazon.{echo_api.domain}"
+        response = await amazon_request(
+            echo_api,
+            HTTPMethod.PUT,
+            f"{base_url}/alexashoppinglists/api/v2/lists/{alexa_list_id}/items/{alexa_item_id}?version={alexa_version}",
+            {
+                "itemAttributesToUpdate": [{"type": "itemName", "value": update.title}],
+                "itemAttributesToRemove": [],
+            },
+        )
+        if response.status >= 300:
+            err_body = await response.text()
+            logger.error("Alexa rename failed: status=%s body=%s", response.status, err_body)
+            raise HTTPException(status_code=response.status, detail="Failed to rename item in Alexa")
+
+        logger.info("Renamed Alexa item %s to %r (list %s)", alexa_item_id, update.title, alexa_list_id)
+        new_alexa_version = alexa_version + 1
+        # Invalidate the list cache so the next fetch returns fresh data
+        _cache.pop(f"items:{alexa_list_id}", None)
+
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE tasks SET title = ?, description = ?, priority = ?, alexa_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (update.title, update.description, update.priority.lower(), new_alexa_version, task_id),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT id, title, description, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+
+    return dict(updated)
