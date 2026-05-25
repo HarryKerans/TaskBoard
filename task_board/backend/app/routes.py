@@ -144,6 +144,77 @@ async def auth_status():
     """Check whether a valid session already exists."""
     return {"authenticated": _is_authenticated()}
 
+
+@router.post("/api/sync")
+async def sync_alexa():
+    """Fetch the Alexa TODO list and sync all items into the local DB.
+    Returns a summary of how many open tasks are now in the DB."""
+    if not _is_authenticated():
+        raise HTTPException(status_code=401, detail="Not authenticated. Call /auth/login first.")
+
+    echo_api = _echo_api()
+    base_url = f"https://www.amazon.{echo_api.domain}"
+
+    # Fetch lists (use cache if available)
+    cached_lists = _cache_get("lists")
+    if cached_lists is not None:
+        lists_data = cached_lists
+    else:
+        response = await amazon_request(echo_api, HTTPMethod.POST, f"{base_url}/alexashoppinglists/api/v2/lists/fetch")
+        lists_data = await response.json()
+        _cache_set("lists", lists_data)
+
+    todo_list = next(
+        (l for l in lists_data.get("listInfoList", []) if l.get("listType") == "TODO"),
+        None,
+    )
+    if not todo_list:
+        return {"synced": 0, "message": "No TODO list found"}
+
+    list_id = todo_list["listId"]
+
+    # Fetch all items, bypassing cache so we always get fresh data on an explicit sync
+    all_items = []
+    next_token: str | None = None
+    while True:
+        body = {"nextToken": next_token} if next_token else {}
+        try:
+            response = await amazon_request(
+                echo_api,
+                HTTPMethod.POST,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{list_id}/items/fetch?limit=100",
+                body,
+            )
+        except CannotRetrieveData as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        data = await response.json()
+        all_items.extend(data.get("itemInfoList", []))
+        next_token = data.get("nextToken")
+        if not next_token:
+            break
+
+    # Only sync active (non-complete) items
+    active_items = [i for i in all_items if i.get("itemStatus") != "COMPLETE"]
+    needs_completion = _sync_alexa_items_to_db(list_id, active_items)
+    _cache_set(f"items:{list_id}", active_items)
+
+    # Reconcile any tasks marked done locally while offline
+    if needs_completion:
+        for pending in needs_completion:
+            try:
+                await amazon_request(
+                    echo_api,
+                    HTTPMethod.PUT,
+                    f"{base_url}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
+                    {"itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}], "itemAttributesToRemove": []},
+                )
+                logger.info("Reconciled offline completion of Alexa item %s", pending["item_id"])
+            except Exception as exc:
+                logger.warning("Could not reconcile Alexa completion for %s: %s", pending["item_id"], exc)
+
+    logger.info("Sync complete: %d active Alexa items", len(active_items))
+    return {"synced": len(active_items)}
+
 class LoginRequest(BaseModel):
     otp: str
     

@@ -65,27 +65,28 @@ Two servers run in parallel in dev mode: the React dev server (port 3000) and th
 ### 1. Install frontend dependencies
 
 ```bash
+cd task_board/frontend
 npm install
 ```
 
 ### 2. Set up the backend
 
 ```bash
-cd backend
+cd task_board/backend
 uv sync          # creates .venv and installs all dependencies
-cd ..
 ```
 
 ### 3. Start the backend
 
 ```bash
-cd backend
+cd task_board/backend
 .venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ### 4. Start the frontend (separate terminal)
 
 ```bash
+cd task_board/frontend
 npm start
 ```
 

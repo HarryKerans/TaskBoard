@@ -1,62 +1,59 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, getLists, getListItems, getTasks, checkAuthStatus, markTaskDone, markAlexaItemDone, updateTask, type AlexaItem, type LocalTask, type Priority } from './alexaApi';
+import { login, syncAlexa, getTasks, checkAuthStatus, markTaskDone, updateTask, type LocalTask, type Priority } from './alexaApi';
 import TaskCard from './TaskCard';
 import EditTaskModal from './EditTaskModal';
 import './App.css';
 
 type AppState = 'loading' | 'login' | 'dashboard';
+type SortOption = 'priority' | 'recent' | 'oldest' | 'az';
+
+const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+function sortTasks(tasks: LocalTask[], sort: SortOption): LocalTask[] {
+  const copy = [...tasks];
+  switch (sort) {
+    case 'priority':
+      return copy.sort((a, b) =>
+        (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3)
+      );
+    case 'recent':
+      return copy.sort((a, b) => b.id - a.id);
+    case 'oldest':
+      return copy.sort((a, b) => a.id - b.id);
+    case 'az':
+      return copy.sort((a, b) => a.title.localeCompare(b.title));
+  }
+}
 
 function App(): ReactElement {
   const [state, setState] = useState<AppState>('loading');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [otp, setOtp] = useState('');
-  const [todoItems, setTodoItems] = useState<AlexaItem[]>([]);
-  const [localOnlyTasks, setLocalOnlyTasks] = useState<LocalTask[]>([]);
-  const [alexaEnabled, setAlexaEnabled] = useState(true);
+  const [tasks, setTasks] = useState<LocalTask[]>([]);
+  const [sort, setSort] = useState<SortOption>('priority');
+  const [alexaEnabled, setAlexaEnabled] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [marking, setMarking] = useState(false);
   const [editingTask, setEditingTask] = useState<LocalTask | null>(null);
-  const [alexaItemToTask, setAlexaItemToTask] = useState<Map<string, LocalTask>>(new Map());
 
-  const loadDashboard = useCallback(async (withAlexa = true) => {
-    const lists = await (withAlexa ? getLists() : Promise.resolve([]));
-
-    let alexaItems: AlexaItem[] = [];
-    if (withAlexa) {
-      const todoList = lists.find(l => l.listType === 'TODO');
-      if (todoList) {
-        alexaItems = await getListItems(todoList.listId);
-      }
-    }
-
-    // getTasks is called AFTER getListItems so the DB sync has already run
-    // and alexa_item_id is populated — required to build the edit button map.
-    const localTasks = await getTasks();
-
-    // Deduplicate: only show local tasks whose title doesn't already appear in Alexa list
-    const alexaTitles = new Set(alexaItems.map(i => i.itemName.toLowerCase()));
-    const extras = localTasks.filter(
-      t => t.status === 'open' && !alexaTitles.has(t.title.toLowerCase())
-    );
-
-    // Build a lookup so Alexa cards can find their local DB record (for editing)
-    const alexaTaskMap = new Map<string, LocalTask>();
-    for (const t of localTasks) {
-      if (t.alexa_item_id) alexaTaskMap.set(t.alexa_item_id, t);
-    }
-
-    setAlexaItemToTask(alexaTaskMap);
-    setTodoItems(alexaItems);
-    setLocalOnlyTasks(extras);
+  const loadDashboard = useCallback(async () => {
+    const allTasks = await getTasks();
+    setTasks(allTasks.filter(t => t.status === 'open'));
     setState('dashboard');
   }, []);
 
-  // On mount: check if a session already exists
+  // On mount: check if a session already exists; if so, sync then load
   useEffect(() => {
-    checkAuthStatus().then(authenticated => {
+    checkAuthStatus().then(async authenticated => {
       if (authenticated) {
-        loadDashboard(true).catch(() => setState('login'));
+        setAlexaEnabled(true);
+        try {
+          await syncAlexa();
+        } catch {
+          // Sync failure is non-fatal — show whatever is in the DB
+        }
+        await loadDashboard();
       } else {
         setState('login');
       }
@@ -69,7 +66,9 @@ function App(): ReactElement {
     setLoading(true);
     try {
       await login(otp);
-      await loadDashboard(true);
+      setAlexaEnabled(true);
+      await syncAlexa();
+      await loadDashboard();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -82,7 +81,7 @@ function App(): ReactElement {
     setError('');
     setLoading(true);
     try {
-      await loadDashboard(false);
+      await loadDashboard();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -102,31 +101,20 @@ function App(): ReactElement {
     if (!editingTask) return;
     await updateTask(editingTask.id, updates);
     setEditingTask(null);
-    await loadDashboard(alexaEnabled);
-  }, [editingTask, alexaEnabled, loadDashboard]);
+    await loadDashboard();
+  }, [editingTask, loadDashboard]);
 
   const handleMarkDone = useCallback(async () => {
     setMarking(true);
-    const ops: Promise<void>[] = [];
-
-    for (const id of Array.from(selectedIds)) {
-      if (id.startsWith('local-')) {
-        const taskId = parseInt(id.replace('local-', ''), 10);
-        ops.push(markTaskDone(taskId));
-      } else if (id.startsWith('alexa-')) {
-        const itemId = id.replace('alexa-', '');
-        const item = todoItems.find(i => i.itemId === itemId);
-        if (item) {
-          ops.push(markAlexaItemDone(item.listId, item.itemId, item.version));
-        }
-      }
-    }
-
+    const ops = Array.from(selectedIds).map(id => {
+      const taskId = parseInt(id.replace('task-', ''), 10);
+      return markTaskDone(taskId);
+    });
     await Promise.all(ops);
     setSelectedIds(new Set());
     setMarking(false);
-    await loadDashboard(alexaEnabled);
-  }, [selectedIds, todoItems, alexaEnabled, loadDashboard]);
+    await loadDashboard();
+  }, [selectedIds, loadDashboard]);
 
   return (
     <div className="App">
@@ -159,30 +147,36 @@ function App(): ReactElement {
 
         {state === 'dashboard' && (
           <div className="panel panel--full">
-            <h1 className="dashboard__title">To Do List</h1>
-            {!alexaEnabled && (
-              <p className="dashboard__notice">Showing local tasks only — not connected to Alexa</p>
-            )}
+            <div className="dashboard__header">
+              <h1 className="dashboard__title">To Do List</h1>
+              <div className="dashboard__controls">
+                {!alexaEnabled && (
+                  <p className="dashboard__notice">Local tasks only</p>
+                )}
+                <label className="sort-label">
+                  Sort by
+                  <select
+                    className="sort-select"
+                    value={sort}
+                    onChange={e => setSort(e.target.value as SortOption)}
+                  >
+                    <option value="priority">Priority</option>
+                    <option value="recent">Recently added</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="az">A → Z</option>
+                  </select>
+                </label>
+              </div>
+            </div>
             <div className="dashboard">
               <div className="container">
-                {todoItems.map(item => (
+                {sortTasks(tasks, sort).map(task => (
                   <TaskCard
-                    key={item.itemId}
-                    id={`alexa-${item.itemId}`}
-                    title={item.itemName}
-                    priority="medium"
-                    selected={selectedIds.has(`alexa-${item.itemId}`)}
-                    onToggle={toggleSelect}
-                    onEdit={alexaItemToTask.has(item.itemId) ? () => setEditingTask(alexaItemToTask.get(item.itemId)!) : undefined}
-                  />
-                ))}
-                {localOnlyTasks.map(task => (
-                  <TaskCard
-                    key={`local-${task.id}`}
-                    id={`local-${task.id}`}
+                    key={`task-${task.id}`}
+                    id={`task-${task.id}`}
                     title={task.title}
                     priority={task.priority}
-                    selected={selectedIds.has(`local-${task.id}`)}
+                    selected={selectedIds.has(`task-${task.id}`)}
                     onToggle={toggleSelect}
                     onEdit={() => setEditingTask(task)}
                   />
