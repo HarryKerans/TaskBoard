@@ -51,6 +51,7 @@ export interface LocalTask {
   status: string;
   priority: Priority;
   source_type: string;
+  alexa_item_id?: string;
 }
 
 export async function getTasks(): Promise<LocalTask[]> {

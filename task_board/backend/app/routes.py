@@ -226,6 +226,15 @@ async def mark_alexa_item_done(list_id: str, item_id: str, body: dict):
         body = await response.text()
         logger.error("Amazon mark-done failed: status=%s body=%s", response.status, body)
         raise HTTPException(status_code=response.status, detail="Failed to mark Alexa item as done")
+
+    # Mirror the completion in the local DB so the record doesn't stay stale
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE tasks SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
+            (item_id,),
+        )
+        conn.commit()
+
     logger.info("Marked Alexa item %s in list %s as done (status %s)", item_id, list_id, response.status)
     return {"status": "ok"}
 

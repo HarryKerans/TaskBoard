@@ -91,7 +91,7 @@ def list_tasks() -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT id, title, description, status, priority, source_type, created_at, updated_at
+            SELECT id, title, description, status, priority, source_type, alexa_item_id, created_at, updated_at
             FROM tasks
             ORDER BY id DESC
             """

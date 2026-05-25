@@ -17,6 +17,7 @@ function App(): ReactElement {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [marking, setMarking] = useState(false);
   const [editingTask, setEditingTask] = useState<LocalTask | null>(null);
+  const [alexaItemToTask, setAlexaItemToTask] = useState<Map<string, LocalTask>>(new Map());
 
   const loadDashboard = useCallback(async (withAlexa = true) => {
     const [lists, localTasks] = await Promise.all([
@@ -38,6 +39,13 @@ function App(): ReactElement {
       t => t.status === 'open' && !alexaTitles.has(t.title.toLowerCase())
     );
 
+    // Build a lookup so Alexa cards can find their local DB record (for editing)
+    const alexaTaskMap = new Map<string, LocalTask>();
+    for (const t of localTasks) {
+      if (t.alexa_item_id) alexaTaskMap.set(t.alexa_item_id, t);
+    }
+
+    setAlexaItemToTask(alexaTaskMap);
     setTodoItems(alexaItems);
     setLocalOnlyTasks(extras);
     setState('dashboard');
@@ -164,6 +172,7 @@ function App(): ReactElement {
                     priority="medium"
                     selected={selectedIds.has(`alexa-${item.itemId}`)}
                     onToggle={toggleSelect}
+                    onEdit={alexaItemToTask.has(item.itemId) ? () => setEditingTask(alexaItemToTask.get(item.itemId)!) : undefined}
                   />
                 ))}
                 {localOnlyTasks.map(task => (
