@@ -1,6 +1,6 @@
 name: "Task Board"
 description: "A simple task board application built with FastAPI and SQLite."
-version: "0.3.2"
+version: "0.3.3"
 slug: "task_board"
 init: false
 
