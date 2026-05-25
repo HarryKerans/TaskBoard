@@ -1,7 +1,12 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 .App {
   min-height: 100vh;
   background: #f5f7fb;
   color: #172033;
+  overflow-x: hidden;
 }
 
 .App-main {
@@ -262,4 +267,41 @@
   color: #a92d1d;
   border-radius: 6px;
   font-size: 0.9rem;
+}
+
+@media (max-width: 480px) {
+  .App-main {
+    padding: 16px;
+  }
+
+  .App-main--dashboard {
+    padding: 16px;
+  }
+
+  .panel {
+    padding: 20px;
+  }
+
+  .task-card {
+    padding: 16px;
+  }
+
+  .task-card__title {
+    font-size: 1.2rem;
+  }
+
+  .dashboard__title {
+    font-size: 1.4rem;
+  }
+
+  .mark-done-bar {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .btn--done {
+    width: 100%;
+    text-align: center;
+  }
 }
