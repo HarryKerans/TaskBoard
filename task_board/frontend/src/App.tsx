@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, syncAlexa, getTasks, checkAuthStatus, markTaskDone, updateTask, type LocalTask, type Priority } from './alexaApi';
+import { login, syncAlexa, getTasks, checkAuthStatus, markTaskDone, updateTask, createTask, type LocalTask, type Priority } from './alexaApi';
 import TaskCard from './TaskCard';
 import EditTaskModal from './EditTaskModal';
 import './App.css';
 
 type AppState = 'loading' | 'login' | 'dashboard';
-type SortOption = 'priority' | 'recent' | 'oldest' | 'az';
+type SortOption = 'priority' | 'recent' | 'oldest' | 'updated' | 'az';
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
@@ -17,9 +17,11 @@ function sortTasks(tasks: LocalTask[], sort: SortOption): LocalTask[] {
         (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3)
       );
     case 'recent':
-      return copy.sort((a, b) => b.id - a.id);
+      return copy.sort((a, b) => b.created_at.localeCompare(a.created_at));
     case 'oldest':
-      return copy.sort((a, b) => a.id - b.id);
+      return copy.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    case 'updated':
+      return copy.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     case 'az':
       return copy.sort((a, b) => a.title.localeCompare(b.title));
   }
@@ -36,6 +38,7 @@ function App(): ReactElement {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [marking, setMarking] = useState(false);
   const [editingTask, setEditingTask] = useState<LocalTask | null>(null);
+  const [addingTask, setAddingTask] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     const allTasks = await getTasks();
@@ -104,6 +107,12 @@ function App(): ReactElement {
     await loadDashboard();
   }, [editingTask, loadDashboard]);
 
+  const handleCreateTask = useCallback(async (data: { title: string; description: string; priority: Priority }) => {
+    await createTask(data);
+    setAddingTask(false);
+    await loadDashboard();
+  }, [loadDashboard]);
+
   const handleMarkDone = useCallback(async () => {
     setMarking(true);
     const ops = Array.from(selectedIds).map(id => {
@@ -161,11 +170,13 @@ function App(): ReactElement {
                     onChange={e => setSort(e.target.value as SortOption)}
                   >
                     <option value="priority">Priority</option>
-                    <option value="recent">Recently added</option>
+                    <option value="recent">Recently created</option>
                     <option value="oldest">Oldest first</option>
+                    <option value="updated">Recently updated</option>
                     <option value="az">A → Z</option>
                   </select>
                 </label>
+                <button className="btn btn--add" onClick={() => setAddingTask(true)}>+ Add Task</button>
               </div>
             </div>
             <div className="dashboard">
@@ -198,6 +209,12 @@ function App(): ReactElement {
           task={editingTask}
           onSave={handleSaveEdit}
           onClose={() => setEditingTask(null)}
+        />
+      )}
+      {addingTask && (
+        <EditTaskModal
+          onSave={handleCreateTask}
+          onClose={() => setAddingTask(false)}
         />
       )}
     </div>

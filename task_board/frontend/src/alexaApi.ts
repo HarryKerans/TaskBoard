@@ -38,6 +38,8 @@ export interface LocalTask {
   priority: Priority;
   source_type: string;
   alexa_item_id?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export async function getTasks(): Promise<LocalTask[]> {
@@ -53,6 +55,15 @@ export async function getTasks(): Promise<LocalTask[]> {
 export async function markTaskDone(id: number): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}`, { method: 'PATCH' });
   if (!res.ok) throw new Error(`Failed to mark task ${id} as done`);
+}
+
+export async function createTask(data: { title: string; description: string; priority: Priority }): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to create task');
 }
 
 export async function updateTask(

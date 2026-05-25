@@ -38,6 +38,7 @@ app.include_router(router)
 
 class TaskCreate(BaseModel):
     title: str
+    description: str = ''
     priority: str = 'medium'
 
 
@@ -105,10 +106,10 @@ def create_task(task: TaskCreate) -> dict[str, Any]:
     with get_connection() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO tasks (title, status, priority, source_type)
-            VALUES (?, 'open', ?, 'manual')
+            INSERT INTO tasks (title, description, status, priority, source_type)
+            VALUES (?, ?, 'open', ?, 'manual')
             """,
-            (task.title, task.priority.lower()),
+            (task.title, task.description, task.priority.lower()),
         )
 
         task_id = cursor.lastrowid

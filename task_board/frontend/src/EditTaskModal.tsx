@@ -2,17 +2,18 @@ import { useState, useEffect, type ReactElement } from 'react';
 import type { LocalTask, Priority } from './alexaApi';
 
 type EditTaskModalProps = {
-  task: LocalTask;
+  task?: LocalTask;                 // omit for "create" mode
   onSave: (updates: { title: string; description: string; priority: Priority }) => Promise<void>;
   onClose: () => void;
 };
 
 function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElement {
-  const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description ?? '');
-  const [priority, setPriority] = useState<Priority>(task.priority);
+  const [title, setTitle] = useState(task?.title ?? '');
+  const [description, setDescription] = useState(task?.description ?? '');
+  const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const isCreate = !task;
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -21,6 +22,10 @@ function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElem
   }, [onClose]);
 
   const handleSave = async () => {
+    if (!title.trim()) {
+      setError('Title is required');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -34,7 +39,7 @@ function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElem
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <h2 className="modal__title">Edit Task</h2>
+        <h2 className="modal__title">{isCreate ? 'Add Task' : 'Edit Task'}</h2>
         {error && <p className="error">{error}</p>}
         <div className="form">
           <label className="form__label">
@@ -69,7 +74,7 @@ function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElem
         </div>
         <div className="modal__actions">
           <button className="btn" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : isCreate ? 'Add Task' : 'Save'}
           </button>
           <button className="btn btn--secondary" onClick={onClose} disabled={saving}>
             Cancel
