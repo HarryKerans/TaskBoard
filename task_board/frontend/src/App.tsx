@@ -176,8 +176,9 @@ function App(): ReactElement {
                     <option value="az">A → Z</option>
                   </select>
                 </label>
-                <button className="btn btn--add" onClick={() => setAddingTask(true)}>+ Add Task</button>
+                <button className="btn btn--add btn--add-desktop" onClick={() => setAddingTask(true)}>+ Add Task</button>
               </div>
+              <button className="btn btn--add btn--add-mobile" onClick={() => setAddingTask(true)}>+ Add Task</button>
             </div>
             <div className="dashboard">
               <div className="container">
