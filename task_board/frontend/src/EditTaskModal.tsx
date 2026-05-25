@@ -2,15 +2,24 @@ import { useState, useEffect, type ReactElement } from 'react';
 import type { LocalTask, Priority } from './alexaApi';
 
 type EditTaskModalProps = {
-  task?: LocalTask;                 // omit for "create" mode
-  onSave: (updates: { title: string; description: string; priority: Priority }) => Promise<void>;
+  task?: LocalTask;
+  onSave: (updates: { title: string; description: string; priority: Priority; created_at?: string }) => Promise<void>;
   onClose: () => void;
 };
+
+// SQLite stores "YYYY-MM-DD HH:MM:SS"; datetime-local needs "YYYY-MM-DDTHH:MM"
+function toInputValue(sqliteDate: string): string {
+  return sqliteDate.replace(' ', 'T').slice(0, 16);
+}
+function toSqliteValue(inputValue: string): string {
+  return inputValue.replace('T', ' ') + ':00';
+}
 
 function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElement {
   const [title, setTitle] = useState(task?.title ?? '');
   const [description, setDescription] = useState(task?.description ?? '');
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium');
+  const [createdAt, setCreatedAt] = useState(task?.created_at ? toInputValue(task.created_at) : '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const isCreate = !task;
@@ -29,7 +38,12 @@ function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElem
     setSaving(true);
     setError('');
     try {
-      await onSave({ title, description, priority });
+      await onSave({
+        title,
+        description,
+        priority,
+        ...(!isCreate && createdAt ? { created_at: toSqliteValue(createdAt) } : {}),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
       setSaving(false);
@@ -71,6 +85,17 @@ function EditTaskModal({ task, onSave, onClose }: EditTaskModalProps): ReactElem
               <option value="low">Low</option>
             </select>
           </label>
+          {!isCreate && (
+            <label className="form__label">
+              Created at
+              <input
+                className="form__input"
+                type="datetime-local"
+                value={createdAt}
+                onChange={e => setCreatedAt(e.target.value)}
+              />
+            </label>
+          )}
         </div>
         <div className="modal__actions">
           <button className="btn" onClick={handleSave} disabled={saving}>

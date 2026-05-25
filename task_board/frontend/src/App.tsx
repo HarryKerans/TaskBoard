@@ -100,14 +100,14 @@ function App(): ReactElement {
     });
   }, []);
 
-  const handleSaveEdit = useCallback(async (updates: { title: string; description: string; priority: Priority }) => {
+  const handleSaveEdit = useCallback(async (updates: { title: string; description: string; priority: Priority; created_at?: string }) => {
     if (!editingTask) return;
     await updateTask(editingTask.id, updates);
     setEditingTask(null);
     await loadDashboard();
   }, [editingTask, loadDashboard]);
 
-  const handleCreateTask = useCallback(async (data: { title: string; description: string; priority: Priority }) => {
+  const handleCreateTask = useCallback(async (data: { title: string; description: string; priority: Priority; created_at?: string }) => {
     await createTask(data);
     setAddingTask(false);
     await loadDashboard();

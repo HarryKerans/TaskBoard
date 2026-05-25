@@ -420,6 +420,7 @@ class TaskUpdate(BaseModel):
     title: str
     description: str = ''
     priority: str = 'medium'
+    created_at: str | None = None  # ISO datetime string; only updated if provided
 
 
 @router.put("/api/tasks/{task_id}")
@@ -477,8 +478,9 @@ async def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
 
     with get_connection() as conn:
         conn.execute(
-            "UPDATE tasks SET title = ?, description = ?, priority = ?, alexa_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (update.title, update.description, update.priority.lower(), new_alexa_version, task_id),
+            "UPDATE tasks SET title = ?, description = ?, priority = ?, alexa_version = ?,"
+            " created_at = COALESCE(?, created_at), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (update.title, update.description, update.priority.lower(), new_alexa_version, update.created_at, task_id),
         )
         conn.commit()
         updated = conn.execute(

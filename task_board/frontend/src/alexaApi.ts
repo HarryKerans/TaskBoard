@@ -68,7 +68,7 @@ export async function createTask(data: { title: string; description: string; pri
 
 export async function updateTask(
   id: number,
-  updates: { title: string; description: string; priority: Priority },
+  updates: { title: string; description: string; priority: Priority; created_at?: string },
 ): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}`, {
     method: 'PUT',
