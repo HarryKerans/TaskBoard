@@ -39,14 +39,24 @@ def _cache_clear() -> None:
     _cache.clear()
 
 
-def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> None:
-    """Upsert Alexa items into the local DB, storing Alexa metadata for rename support."""
+def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
+    """Upsert Alexa items into the local DB, storing Alexa metadata for rename support.
+
+    Also marks any open Alexa-sourced tasks as done if they no longer appear in the
+    live list — meaning they were completed from another device (phone, Echo, etc.).
+
+    Returns a list of {item_id, list_id, version} dicts for items that are locally
+    'done' but still active in Alexa, so the caller can reconcile them.
+    """
+    live_item_ids = {item.get("itemId") for item in items if item.get("itemId")}
+
     with get_connection() as conn:
-        # Index existing alexa tasks by alexa_item_id (fast path)
-        existing_by_alexa_id: dict[str, int] = {
-            row["alexa_item_id"]: row["id"]
+        # Index existing alexa tasks by alexa_item_id, including their status
+        existing_by_alexa_id: dict[str, dict] = {
+            row["alexa_item_id"]: dict(row)
             for row in conn.execute(
-                "SELECT id, alexa_item_id FROM tasks WHERE source_type = 'alexa' AND alexa_item_id IS NOT NULL"
+                "SELECT id, alexa_item_id, status, alexa_version FROM tasks "
+                "WHERE source_type = 'alexa' AND alexa_item_id IS NOT NULL"
             ).fetchall()
         }
         # Also track all titles for dedup on insert
@@ -55,6 +65,8 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> None:
             for row in conn.execute("SELECT title FROM tasks").fetchall()
         }
         new_count = 0
+        needs_alexa_completion: list[dict] = []
+
         for item in items:
             raw_title = item.get("itemName", "").strip()
             item_id = item.get("itemId", "")
@@ -64,15 +76,24 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> None:
             title = raw_title[:1].upper() + raw_title[1:]
 
             if item_id in existing_by_alexa_id:
-                # Update version and title in case they changed on the Alexa side
-                conn.execute(
-                    "UPDATE tasks SET title = ?, alexa_version = ?, alexa_list_id = ?, updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
-                    (title, version, list_id, item_id),
-                )
+                local = existing_by_alexa_id[item_id]
+                if local["status"] == "done":
+                    # Task was completed locally (offline) but is still active in Alexa
+                    needs_alexa_completion.append(
+                        {"item_id": item_id, "list_id": list_id, "version": version}
+                    )
+                else:
+                    # Update version and title in case they changed on the Alexa side
+                    conn.execute(
+                        "UPDATE tasks SET title = ?, alexa_version = ?, alexa_list_id = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
+                        (title, version, list_id, item_id),
+                    )
             elif title.lower() in existing_titles:
                 # Pre-metadata row — backfill alexa columns
                 conn.execute(
-                    "UPDATE tasks SET alexa_item_id = ?, alexa_list_id = ?, alexa_version = ? WHERE lower(title) = lower(?) AND source_type = 'alexa'",
+                    "UPDATE tasks SET alexa_item_id = ?, alexa_list_id = ?, alexa_version = ? "
+                    "WHERE lower(title) = lower(?) AND source_type = 'alexa'",
                     (item_id, list_id, version, title),
                 )
             else:
@@ -83,8 +104,24 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> None:
                 )
                 existing_titles.add(title.lower())
                 new_count += 1
+
+        # Mark done any open Alexa tasks that are no longer in the live list —
+        # they were completed from another device since the last sync.
+        closed = conn.execute(
+            "UPDATE tasks SET status = 'done', updated_at = CURRENT_TIMESTAMP "
+            "WHERE source_type = 'alexa' AND status = 'open' "
+            "AND alexa_item_id IS NOT NULL AND alexa_item_id NOT IN ({}) "
+            "RETURNING alexa_item_id".format(",".join("?" * len(live_item_ids))),
+            list(live_item_ids),
+        ).fetchall() if live_item_ids else []
+
         conn.commit()
+
+    if closed:
+        logger.debug("Marked %d Alexa task(s) done (completed elsewhere): %s",
+                     len(closed), [r[0] for r in closed])
     logger.debug("Synced %d new Alexa items to local DB", new_count)
+    return needs_alexa_completion
 
 
 def set_state(session, login_data, credentials):
@@ -200,7 +237,25 @@ async def get_list_items(list_id: str):
         if not next_token:
             break
 
-    _sync_alexa_items_to_db(list_id, all_items)
+    needs_completion = _sync_alexa_items_to_db(list_id, all_items)
+
+    # Reconcile offline completions: push to Alexa any tasks marked done locally
+    # while we didn't have an active session.
+    if needs_completion:
+        echo_api = _echo_api()
+        base_url = f"https://www.amazon.{echo_api.domain}"
+        for pending in needs_completion:
+            try:
+                await amazon_request(
+                    echo_api,
+                    HTTPMethod.PUT,
+                    f"{base_url}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
+                    {"itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}], "itemAttributesToRemove": []},
+                )
+                logger.info("Reconciled offline completion of Alexa item %s", pending["item_id"])
+            except Exception as exc:
+                logger.warning("Could not reconcile Alexa completion for %s: %s", pending["item_id"], exc)
+
     _cache_set(cache_key, all_items)
     return all_items
 
@@ -237,6 +292,57 @@ async def mark_alexa_item_done(list_id: str, item_id: str, body: dict):
 
     logger.info("Marked Alexa item %s in list %s as done (status %s)", item_id, list_id, response.status)
     return {"status": "ok"}
+
+
+@router.patch("/api/tasks/{task_id}")
+async def update_task_status(task_id: int) -> dict[str, Any]:
+    """Mark a local task as done. If it is Alexa-sourced and we are authenticated,
+    also complete it in Alexa immediately so it doesn't reappear on the next sync."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, source_type, alexa_item_id, alexa_list_id, alexa_version FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    row = dict(row)
+    if (
+        row["source_type"] == "alexa"
+        and _is_authenticated()
+        and row["alexa_item_id"]
+        and row["alexa_list_id"]
+        and row["alexa_version"] is not None
+    ):
+        echo_api = _echo_api()
+        base_url = f"https://www.amazon.{echo_api.domain}"
+        try:
+            response = await amazon_request(
+                echo_api,
+                HTTPMethod.PUT,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{row['alexa_list_id']}/items/{row['alexa_item_id']}?version={row['alexa_version']}",
+                {"itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}], "itemAttributesToRemove": []},
+            )
+            if response.status < 300:
+                logger.info("Marked Alexa item %s done from local task %s", row["alexa_item_id"], task_id)
+                _cache.pop(f"items:{row['alexa_list_id']}", None)
+            else:
+                logger.warning("Alexa mark-done returned %s for item %s", response.status, row["alexa_item_id"])
+        except Exception as exc:
+            logger.warning("Could not mark Alexa item %s done: %s", row["alexa_item_id"], exc)
+        # Local DB is always updated regardless of Alexa result
+
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE tasks SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (task_id,),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT id, title, description, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    return dict(updated)
 
 
 class TaskUpdate(BaseModel):
