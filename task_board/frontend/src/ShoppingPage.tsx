@@ -2,9 +2,26 @@ import { useState, useEffect, useCallback, type ReactElement } from 'react';
 import { getShoppingItems, markShoppingItemDone, createShoppingItem, type ShoppingItem as ShoppingItemType } from './alexaApi';
 import ShoppingItem from './ShoppingItem';
 
+type SortOption = 'recent' | 'oldest' | 'updated' | 'az';
+
+function sortItems(items: ShoppingItemType[], sort: SortOption): ShoppingItemType[] {
+  const copy = [...items];
+  switch (sort) {
+    case 'recent':
+      return copy.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    case 'oldest':
+      return copy.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    case 'updated':
+      return copy.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    case 'az':
+      return copy.sort((a, b) => a.title.localeCompare(b.title));
+  }
+}
+
 function ShoppingPage(): ReactElement {
   const [items, setItems] = useState<ShoppingItemType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sort, setSort] = useState<SortOption>('recent');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [marking, setMarking] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
@@ -63,6 +80,19 @@ function ShoppingPage(): ReactElement {
           Shopping List
         </h1>
         <div className="dashboard__controls">
+          <label className="sort-label">
+            Sort by
+            <select
+              className="sort-select"
+              value={sort}
+              onChange={e => setSort(e.target.value as SortOption)}
+            >
+              <option value="recent">Recently added</option>
+              <option value="oldest">Oldest first</option>
+              <option value="updated">Recently updated</option>
+              <option value="az">A → Z</option>
+            </select>
+          </label>
           <button className="btn btn--add btn--add-desktop" onClick={() => setAddingItem(true)}>+ Add Item</button>
         </div>
         <button className="btn btn--add btn--add-mobile" onClick={() => setAddingItem(true)}>+ Add Item</button>
@@ -93,7 +123,7 @@ function ShoppingPage(): ReactElement {
         {!loading && items.length === 0 && (
           <p className="panel__subtitle">No shopping items</p>
         )}
-        {items.map(item => (
+        {sortItems(items, sort).map(item => (
           <ShoppingItem
             key={item.id}
             id={`shop-${item.id}`}

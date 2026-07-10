@@ -159,23 +159,6 @@ def list_shopping_items() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-@app.patch("/api/shopping/{item_id}")
-def mark_shopping_item_done(item_id: int) -> dict[str, Any]:
-    with get_connection() as connection:
-        connection.execute(
-            "UPDATE shopping_items SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (item_id,),
-        )
-        connection.commit()
-        row = connection.execute(
-            "SELECT id, title, status, source_type, created_at, updated_at FROM shopping_items WHERE id = ?",
-            (item_id,),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Shopping item not found")
-    return dict(row)
-
-
 @app.post("/api/shopping")
 def create_shopping_item(item: ShoppingItemCreate) -> dict[str, Any]:
     with get_connection() as connection:
