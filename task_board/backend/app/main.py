@@ -42,6 +42,10 @@ class TaskCreate(BaseModel):
     priority: str = 'medium'
 
 
+class ShoppingItemCreate(BaseModel):
+    title: str
+
+
 
 def initialise_database() -> None:
     with get_connection() as connection:
@@ -54,6 +58,21 @@ def initialise_database() -> None:
                 status TEXT NOT NULL DEFAULT 'open',
                 priority TEXT NOT NULL DEFAULT 'medium',
                 source_type TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS shopping_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                source_type TEXT NOT NULL DEFAULT 'manual',
+                alexa_item_id TEXT DEFAULT NULL,
+                alexa_list_id TEXT DEFAULT NULL,
+                alexa_version INTEGER DEFAULT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -123,6 +142,51 @@ def create_task(task: TaskCreate) -> dict[str, Any]:
             (task_id,),
         ).fetchone()
 
+    return dict(row)
+
+
+@app.get("/api/shopping")
+def list_shopping_items() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, title, status, source_type, alexa_item_id, created_at, updated_at
+            FROM shopping_items
+            WHERE status = 'active'
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.patch("/api/shopping/{item_id}")
+def mark_shopping_item_done(item_id: int) -> dict[str, Any]:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE shopping_items SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (item_id,),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT id, title, status, source_type, created_at, updated_at FROM shopping_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Shopping item not found")
+    return dict(row)
+
+
+@app.post("/api/shopping")
+def create_shopping_item(item: ShoppingItemCreate) -> dict[str, Any]:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "INSERT INTO shopping_items (title, status, source_type) VALUES (?, 'active', 'manual')",
+            (item.title,),
+        )
+        row = connection.execute(
+            "SELECT id, title, status, source_type, created_at, updated_at FROM shopping_items WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
     return dict(row)
 
 

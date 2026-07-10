@@ -139,6 +139,81 @@ def _sync_alexa_items_to_db(list_id: str, items: list[dict]) -> tuple[list[dict]
     return needs_alexa_completion, needs_alexa_rename
 
 
+def _sync_shopping_items_to_db(list_id: str, items: list[dict]) -> list[dict]:
+    """Upsert Alexa shopping list items into the local DB.
+
+    Returns a list of items that were marked done locally but still active in Alexa,
+    so they can be completed remotely.
+    """
+    live_item_ids = {item.get("itemId") for item in items if item.get("itemId")}
+
+    with get_connection() as conn:
+        existing_by_alexa_id: dict[str, dict] = {
+            row["alexa_item_id"]: dict(row)
+            for row in conn.execute(
+                "SELECT id, title, alexa_item_id, status, alexa_version FROM shopping_items "
+                "WHERE source_type = 'alexa' AND alexa_item_id IS NOT NULL"
+            ).fetchall()
+        }
+        existing_titles = {
+            row[0].lower()
+            for row in conn.execute("SELECT title FROM shopping_items WHERE status = 'active'").fetchall()
+        }
+        new_count = 0
+        needs_alexa_completion: list[dict] = []
+
+        for item in items:
+            raw_title = item.get("itemName", "").strip()
+            item_id = item.get("itemId", "")
+            version = item.get("version")
+            if not raw_title or not item_id:
+                continue
+            title = raw_title[:1].upper() + raw_title[1:]
+
+            if item_id in existing_by_alexa_id:
+                local = existing_by_alexa_id[item_id]
+                if local["status"] == "done":
+                    needs_alexa_completion.append(
+                        {"item_id": item_id, "list_id": list_id, "version": version}
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE shopping_items SET alexa_version = ?, alexa_list_id = ?, title = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE alexa_item_id = ?",
+                        (version, list_id, title, item_id),
+                    )
+            elif title.lower() in existing_titles:
+                conn.execute(
+                    "UPDATE shopping_items SET alexa_item_id = ?, alexa_list_id = ?, alexa_version = ? "
+                    "WHERE lower(title) = lower(?) AND source_type = 'alexa'",
+                    (item_id, list_id, version, title),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO shopping_items (title, status, source_type, alexa_item_id, alexa_list_id, alexa_version) "
+                    "VALUES (?, 'active', 'alexa', ?, ?, ?)",
+                    (title, item_id, list_id, version),
+                )
+                existing_titles.add(title.lower())
+                new_count += 1
+
+        # Mark done any active shopping items no longer in the live list
+        if live_item_ids:
+            conn.execute(
+                "UPDATE shopping_items SET status = 'done', updated_at = CURRENT_TIMESTAMP "
+                "WHERE source_type = 'alexa' AND status = 'active' "
+                "AND alexa_item_id IS NOT NULL AND alexa_item_id NOT IN ({})".format(
+                    ",".join("?" * len(live_item_ids))
+                ),
+                list(live_item_ids),
+            )
+
+        conn.commit()
+
+    logger.debug("Synced %d new shopping items to local DB", new_count)
+    return needs_alexa_completion
+
+
 def set_state(session, login_data, credentials):
     global _session, _login_data, _credentials
     _session = session
@@ -241,7 +316,59 @@ async def sync_alexa():
             logger.warning("Could not reconcile rename for Alexa item %s: %s", pending["item_id"], exc)
 
     logger.info("Sync complete: %d active Alexa items", len(active_items))
-    return {"synced": len(active_items)}
+
+    # --- Sync shopping list ---
+    shopping_list = next(
+        (l for l in lists_data.get("listInfoList", [])
+         if l.get("listType") == "SHOP"),
+        None,
+    )
+    if not shopping_list:
+        list_types = [l.get("listType") for l in lists_data.get("listInfoList", [])]
+        logger.warning("No shopping list found. Available list types: %s", list_types)
+    shopping_synced = 0
+    if shopping_list:
+        shopping_list_id = shopping_list["listId"]
+        shopping_items: list[dict] = []
+        next_token_shop: str | None = None
+        while True:
+            body_shop = {"nextToken": next_token_shop} if next_token_shop else {}
+            try:
+                response = await amazon_request(
+                    echo_api,
+                    HTTPMethod.POST,
+                    f"{base_url}/alexashoppinglists/api/v2/lists/{shopping_list_id}/items/fetch?limit=100",
+                    body_shop,
+                )
+            except CannotRetrieveData as e:
+                logger.warning("Could not fetch shopping list items: %s", e)
+                break
+            data = await response.json()
+            shopping_items.extend(data.get("itemInfoList", []))
+            next_token_shop = data.get("nextToken")
+            if not next_token_shop:
+                break
+
+        active_shopping = [i for i in shopping_items if i.get("itemStatus") != "COMPLETE"]
+        shopping_needs_completion = _sync_shopping_items_to_db(shopping_list_id, active_shopping)
+        _cache_set(f"items:{shopping_list_id}", active_shopping)
+
+        for pending in shopping_needs_completion:
+            try:
+                await amazon_request(
+                    echo_api,
+                    HTTPMethod.PUT,
+                    f"{base_url}/alexashoppinglists/api/v2/lists/{pending['list_id']}/items/{pending['item_id']}?version={pending['version']}",
+                    {"itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}], "itemAttributesToRemove": []},
+                )
+                logger.info("Reconciled offline completion of shopping item %s", pending["item_id"])
+            except Exception as exc:
+                logger.warning("Could not reconcile shopping completion for %s: %s", pending["item_id"], exc)
+
+        shopping_synced = len(active_shopping)
+        logger.info("Shopping sync complete: %d active items", shopping_synced)
+
+    return {"synced": len(active_items), "shopping_synced": shopping_synced}
 
 class LoginRequest(BaseModel):
     otp: str
@@ -524,4 +651,53 @@ async def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
             (task_id,),
         ).fetchone()
 
+    return dict(updated)
+
+
+@router.patch("/api/shopping/{item_id}")
+async def mark_shopping_done(item_id: int) -> dict[str, Any]:
+    """Mark a shopping item as done. If Alexa-sourced and authenticated, also complete in Alexa."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, source_type, alexa_item_id, alexa_list_id, alexa_version FROM shopping_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Shopping item not found")
+
+    row = dict(row)
+    if (
+        row["source_type"] == "alexa"
+        and _is_authenticated()
+        and row["alexa_item_id"]
+        and row["alexa_list_id"]
+        and row["alexa_version"] is not None
+    ):
+        echo_api = _echo_api()
+        base_url = f"https://www.amazon.{echo_api.domain}"
+        try:
+            response = await amazon_request(
+                echo_api,
+                HTTPMethod.PUT,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{row['alexa_list_id']}/items/{row['alexa_item_id']}?version={row['alexa_version']}",
+                {"itemAttributesToUpdate": [{"type": "itemStatus", "value": "COMPLETE"}], "itemAttributesToRemove": []},
+            )
+            if response.status < 300:
+                logger.info("Marked Alexa shopping item %s done", row["alexa_item_id"])
+                _cache.pop(f"items:{row['alexa_list_id']}", None)
+            else:
+                logger.warning("Alexa mark-done returned %s for shopping item %s", response.status, row["alexa_item_id"])
+        except Exception as exc:
+            logger.warning("Could not mark Alexa shopping item %s done: %s", row["alexa_item_id"], exc)
+
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE shopping_items SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (item_id,),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT id, title, status, source_type, created_at, updated_at FROM shopping_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
     return dict(updated)

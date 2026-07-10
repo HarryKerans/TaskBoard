@@ -2,9 +2,11 @@ import { useState, useCallback, useEffect, type ReactElement } from 'react';
 import { login, syncAlexa, getTasks, checkAuthStatus, markTaskDone, updateTask, createTask, type LocalTask, type Priority } from './alexaApi';
 import TaskCard from './TaskCard';
 import EditTaskModal from './EditTaskModal';
+import ShoppingPage from './ShoppingPage';
 import './App.css';
 
 type AppState = 'loading' | 'login' | 'dashboard';
+type Page = 'tasks' | 'shopping';
 type SortOption = 'priority' | 'recent' | 'oldest' | 'updated' | 'az';
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
@@ -39,6 +41,7 @@ function App(): ReactElement {
   const [marking, setMarking] = useState(false);
   const [editingTask, setEditingTask] = useState<LocalTask | null>(null);
   const [addingTask, setAddingTask] = useState(false);
+  const [page, setPage] = useState<Page>('tasks');
 
   const loadDashboard = useCallback(async () => {
     const allTasks = await getTasks();
@@ -156,52 +159,76 @@ function App(): ReactElement {
 
         {state === 'dashboard' && (
           <div className="panel panel--full">
-            <div className="dashboard__header">
-              <h1 className="dashboard__title">To Do List</h1>
-              <div className="dashboard__controls">
-                {!alexaEnabled && (
-                  <p className="dashboard__notice">Local tasks only</p>
+            <nav className="page-tabs">
+              <button
+                className={`page-tab${page === 'tasks' ? ' page-tab--active' : ''}`}
+                onClick={() => setPage('tasks')}
+              >
+                To Do List
+              </button>
+              <button
+                className={`page-tab${page === 'shopping' ? ' page-tab--active' : ''}`}
+                onClick={() => setPage('shopping')}
+              >
+                <svg className="page-tab__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="9" cy="21" r="1"/>
+                  <circle cx="20" cy="21" r="1"/>
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+                </svg>
+                Shopping
+              </button>
+            </nav>
+            {page === 'tasks' && (
+              <>
+                <div className="dashboard__header">
+                  <h1 className="dashboard__title">To Do List</h1>
+                  <div className="dashboard__controls">
+                    {!alexaEnabled && (
+                      <p className="dashboard__notice">Local tasks only</p>
+                    )}
+                    <label className="sort-label">
+                      Sort by
+                      <select
+                        className="sort-select"
+                        value={sort}
+                        onChange={e => setSort(e.target.value as SortOption)}
+                      >
+                        <option value="priority">Priority</option>
+                        <option value="recent">Recently created</option>
+                        <option value="oldest">Oldest first</option>
+                        <option value="updated">Recently updated</option>
+                        <option value="az">A → Z</option>
+                      </select>
+                    </label>
+                    <button className="btn btn--add btn--add-desktop" onClick={() => setAddingTask(true)}>+ Add Task</button>
+                  </div>
+                  <button className="btn btn--add btn--add-mobile" onClick={() => setAddingTask(true)}>+ Add Task</button>
+                </div>
+                <div className="dashboard">
+                  <div className="container">
+                    {sortTasks(tasks, sort).map(task => (
+                      <TaskCard
+                        key={`task-${task.id}`}
+                        id={`task-${task.id}`}
+                        title={task.title}
+                        priority={task.priority}
+                        selected={selectedIds.has(`task-${task.id}`)}
+                        onToggle={toggleSelect}
+                        onEdit={() => setEditingTask(task)}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {selectedIds.size > 0 && (
+                  <div className="mark-done-bar">
+                    <button className="btn btn--done" onClick={handleMarkDone} disabled={marking}>
+                      {marking ? 'Saving…' : `Mark as done (${selectedIds.size})`}
+                    </button>
+                  </div>
                 )}
-                <label className="sort-label">
-                  Sort by
-                  <select
-                    className="sort-select"
-                    value={sort}
-                    onChange={e => setSort(e.target.value as SortOption)}
-                  >
-                    <option value="priority">Priority</option>
-                    <option value="recent">Recently created</option>
-                    <option value="oldest">Oldest first</option>
-                    <option value="updated">Recently updated</option>
-                    <option value="az">A → Z</option>
-                  </select>
-                </label>
-                <button className="btn btn--add btn--add-desktop" onClick={() => setAddingTask(true)}>+ Add Task</button>
-              </div>
-              <button className="btn btn--add btn--add-mobile" onClick={() => setAddingTask(true)}>+ Add Task</button>
-            </div>
-            <div className="dashboard">
-              <div className="container">
-                {sortTasks(tasks, sort).map(task => (
-                  <TaskCard
-                    key={`task-${task.id}`}
-                    id={`task-${task.id}`}
-                    title={task.title}
-                    priority={task.priority}
-                    selected={selectedIds.has(`task-${task.id}`)}
-                    onToggle={toggleSelect}
-                    onEdit={() => setEditingTask(task)}
-                  />
-                ))}
-              </div>
-            </div>
-            {selectedIds.size > 0 && (
-              <div className="mark-done-bar">
-                <button className="btn btn--done" onClick={handleMarkDone} disabled={marking}>
-                  {marking ? 'Saving…' : `Mark as done (${selectedIds.size})`}
-                </button>
-              </div>
+              </>
             )}
+            {page === 'shopping' && <ShoppingPage />}
           </div>
         )}
       </main>

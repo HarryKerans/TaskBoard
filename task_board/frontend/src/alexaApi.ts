@@ -77,3 +77,33 @@ export async function updateTask(
   });
   if (!res.ok) throw new Error(`Failed to update task ${id}`);
 }
+
+export interface ShoppingItem {
+  id: number;
+  title: string;
+  status: string;
+  source_type: string;
+  alexa_item_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getShoppingItems(): Promise<ShoppingItem[]> {
+  const res = await fetch(`${BASE_URL}/api/shopping`);
+  if (!res.ok) throw new Error('Failed to fetch shopping items');
+  return res.json();
+}
+
+export async function markShoppingItemDone(id: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/shopping/${id}`, { method: 'PATCH' });
+  if (!res.ok) throw new Error(`Failed to mark shopping item ${id} as done`);
+}
+
+export async function createShoppingItem(title: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/shopping`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error('Failed to create shopping item');
+}
