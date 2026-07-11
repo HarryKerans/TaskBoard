@@ -99,6 +99,23 @@
   line-height: 1.2;
 }
 
+.task-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.task-card__tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .task-card__meta {
   display: flex;
   align-items: center;
@@ -240,6 +257,116 @@
   display: flex;
   gap: 12px;
   justify-content: flex-end;
+}
+
+/* ---- Tag Input ---- */
+.tag-input-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid #d9e1ee;
+  border-radius: 6px;
+  background: #f5f7fb;
+  min-height: 40px;
+  align-items: center;
+  transition: border-color 0.15s;
+}
+
+.tag-input-container:focus-within {
+  border-color: #4a90d9;
+  background: #fff;
+}
+
+.tag-input-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  background: #e8f0fe;
+  color: #1a56db;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tag-input-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  opacity: 0.7;
+  border-radius: 50%;
+}
+
+.tag-input-remove:hover {
+  opacity: 1;
+  background: rgba(26, 86, 219, 0.15);
+}
+
+.tag-input-field {
+  flex: 1;
+  min-width: 80px;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.9rem;
+  color: #172033;
+  padding: 2px 0;
+}
+
+.tag-input-add-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #4a90d9;
+  border-radius: 50%;
+  background: #e8f0fe;
+  color: #1a56db;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.tag-input-add-btn:hover {
+  background: #4a90d9;
+  color: #fff;
+}
+
+.tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.tag-suggestion {
+  padding: 3px 10px;
+  border: 1px solid #d9e1ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #172033;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.tag-suggestion:hover {
+  border-color: #4a90d9;
+  background: #e8f0fe;
 }
 .btn {
   padding: 10px 20px;

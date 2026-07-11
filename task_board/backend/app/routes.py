@@ -1,6 +1,9 @@
+import json
 import logging
+import os
 import time
 from http import HTTPMethod
+from pathlib import Path
 from typing import Any
 
 from aioamazondevices.api import AmazonEchoApi
@@ -13,6 +16,25 @@ from app.helpers import amazon_request, make_echo_api, get_settings, get_connect
 logger = logging.getLogger("alexa_api")
 
 router = APIRouter()
+
+# --- Fixture support for local development ---
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
+FIXTURE_FILE = FIXTURE_DIR / "alexa_snapshot.json"
+
+
+def _fixture_mode() -> bool:
+    return os.getenv("ALEXA_FIXTURE_MODE", "").lower() in ("true", "1", "yes")
+
+
+def _load_fixture() -> dict | None:
+    if FIXTURE_FILE.exists():
+        return json.loads(FIXTURE_FILE.read_text())
+    return None
+
+
+def _save_fixture(data: dict) -> None:
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    FIXTURE_FILE.write_text(json.dumps(data, indent=2))
 
 # Shared state — set by main.py at startup and after login
 _session = None
@@ -232,13 +254,51 @@ def _is_authenticated() -> bool:
 @router.get("/auth/status")
 async def auth_status():
     """Check whether a valid session already exists."""
-    return {"authenticated": _is_authenticated()}
+    return {"authenticated": _is_authenticated() or _fixture_mode()}
 
 
 @router.post("/api/sync")
 async def sync_alexa():
     """Fetch the Alexa TODO list and sync all items into the local DB.
-    Returns a summary of how many open tasks are now in the DB."""
+    Returns a summary of how many open tasks are now in the DB.
+
+    In fixture mode (ALEXA_FIXTURE_MODE=true), reads from a recorded snapshot
+    instead of hitting the live API, and skips all write-backs to Alexa."""
+
+    # --- Fixture mode: replay from recorded snapshot ---
+    if _fixture_mode():
+        fixture = _load_fixture()
+        if not fixture:
+            raise HTTPException(status_code=400, detail="Fixture mode enabled but no fixture found. Record one first with POST /api/fixtures/record")
+
+        logger.info("Sync running in FIXTURE MODE (read-only)")
+        lists_data = fixture["lists"]
+
+        todo_list = next(
+            (l for l in lists_data.get("listInfoList", []) if l.get("listType") == "TODO"),
+            None,
+        )
+        todo_synced = 0
+        if todo_list:
+            list_id = todo_list["listId"]
+            active_items = fixture.get("todo_items", [])
+            _sync_alexa_items_to_db(list_id, active_items)
+            todo_synced = len(active_items)
+
+        shopping_list = next(
+            (l for l in lists_data.get("listInfoList", []) if l.get("listType") == "SHOP"),
+            None,
+        )
+        shopping_synced = 0
+        if shopping_list:
+            shopping_list_id = shopping_list["listId"]
+            active_shopping = fixture.get("shopping_items", [])
+            _sync_shopping_items_to_db(shopping_list_id, active_shopping)
+            shopping_synced = len(active_shopping)
+
+        return {"synced": todo_synced, "shopping_synced": shopping_synced, "fixture_mode": True}
+
+    # --- Live mode ---
     if not _is_authenticated():
         raise HTTPException(status_code=401, detail="Not authenticated. Call /auth/login first.")
 
@@ -414,6 +474,79 @@ async def login(body: LoginRequest):
     return {"status": "ok"}
 
 
+@router.post("/api/fixtures/record")
+async def record_fixture():
+    """Capture a snapshot of the current Alexa lists and items to a local fixture file.
+    Requires an active authenticated session. Use the fixture with ALEXA_FIXTURE_MODE=true."""
+    if not _is_authenticated():
+        raise HTTPException(status_code=401, detail="Not authenticated. Call /auth/login first.")
+
+    echo_api = _echo_api()
+    base_url = f"https://www.amazon.{echo_api.domain}"
+
+    # Fetch lists
+    response = await amazon_request(echo_api, HTTPMethod.POST, f"{base_url}/alexashoppinglists/api/v2/lists/fetch")
+    lists_data = await response.json()
+
+    fixture: dict[str, Any] = {"lists": lists_data, "todo_items": [], "shopping_items": []}
+
+    # Fetch TODO items
+    todo_list = next(
+        (l for l in lists_data.get("listInfoList", []) if l.get("listType") == "TODO"),
+        None,
+    )
+    if todo_list:
+        list_id = todo_list["listId"]
+        all_items: list[dict] = []
+        next_token: str | None = None
+        while True:
+            body = {"nextToken": next_token} if next_token else {}
+            response = await amazon_request(
+                echo_api, HTTPMethod.POST,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{list_id}/items/fetch?limit=100",
+                body,
+            )
+            data = await response.json()
+            all_items.extend(data.get("itemInfoList", []))
+            next_token = data.get("nextToken")
+            if not next_token:
+                break
+        fixture["todo_items"] = [i for i in all_items if i.get("itemStatus") != "COMPLETE"]
+
+    # Fetch shopping items
+    shopping_list = next(
+        (l for l in lists_data.get("listInfoList", []) if l.get("listType") == "SHOP"),
+        None,
+    )
+    if shopping_list:
+        shopping_list_id = shopping_list["listId"]
+        shop_items: list[dict] = []
+        next_token_s: str | None = None
+        while True:
+            body_s = {"nextToken": next_token_s} if next_token_s else {}
+            response = await amazon_request(
+                echo_api, HTTPMethod.POST,
+                f"{base_url}/alexashoppinglists/api/v2/lists/{shopping_list_id}/items/fetch?limit=100",
+                body_s,
+            )
+            data = await response.json()
+            shop_items.extend(data.get("itemInfoList", []))
+            next_token_s = data.get("nextToken")
+            if not next_token_s:
+                break
+        fixture["shopping_items"] = [i for i in shop_items if i.get("itemStatus") != "COMPLETE"]
+
+    _save_fixture(fixture)
+    logger.info("Recorded fixture: %d todo items, %d shopping items",
+                len(fixture["todo_items"]), len(fixture["shopping_items"]))
+    return {
+        "status": "ok",
+        "todo_items": len(fixture["todo_items"]),
+        "shopping_items": len(fixture["shopping_items"]),
+        "path": str(FIXTURE_FILE),
+    }
+
+
 @router.get("/lists")
 async def get_lists():
     """Return all Alexa shopping/todo lists (cached for 1 hour)."""
@@ -587,6 +720,7 @@ class TaskUpdate(BaseModel):
     description: str = ''
     priority: str = 'medium'
     created_at: str | None = None  # ISO datetime string; only updated if provided
+    tags: list[str] = []
 
 
 @router.put("/api/tasks/{task_id}")
@@ -639,19 +773,22 @@ async def update_task(task_id: int, update: TaskUpdate) -> dict[str, Any]:
                 task_id, update.title,
             )
 
+    tags_json = json.dumps([t.strip() for t in update.tags if t.strip()])
     with get_connection() as conn:
         conn.execute(
-            "UPDATE tasks SET title = ?, description = ?, priority = ?, alexa_version = ?,"
+            "UPDATE tasks SET title = ?, description = ?, priority = ?, tags = ?, alexa_version = ?,"
             " created_at = COALESCE(?, created_at), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (update.title, update.description, update.priority.lower(), new_alexa_version, update.created_at, task_id),
+            (update.title, update.description, update.priority.lower(), tags_json, new_alexa_version, update.created_at, task_id),
         )
         conn.commit()
         updated = conn.execute(
-            "SELECT id, title, description, status, priority, source_type, created_at, updated_at FROM tasks WHERE id = ?",
+            "SELECT id, title, description, status, priority, source_type, tags, created_at, updated_at FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
+        result = dict(updated)
+        result["tags"] = json.loads(result["tags"]) if result["tags"] else []
 
-    return dict(updated)
+    return result
 
 
 @router.patch("/api/shopping/{item_id}")

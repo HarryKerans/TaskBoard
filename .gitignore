@@ -29,3 +29,6 @@ tasks.db
 
 # Reference docs (pyalexatodo clone, not part of the add-on)
 task_board/backend/pyalexatodo
+
+# Recorded Alexa API fixtures (contain account-specific data)
+task_board/backend/fixtures/alexa_snapshot.json

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ''
     priority: str = 'medium'
+    tags: list[str] = []
 
 
 class ShoppingItemCreate(BaseModel):
@@ -88,6 +90,7 @@ def initialise_database() -> None:
             "ALTER TABLE tasks ADD COLUMN alexa_item_id TEXT DEFAULT NULL",
             "ALTER TABLE tasks ADD COLUMN alexa_list_id TEXT DEFAULT NULL",
             "ALTER TABLE tasks ADD COLUMN alexa_version INTEGER DEFAULT NULL",
+            "ALTER TABLE tasks ADD COLUMN tags TEXT DEFAULT '[]'",
         ):
             try:
                 connection.execute(col_def)
@@ -111,38 +114,57 @@ def list_tasks() -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT id, title, description, status, priority, source_type, alexa_item_id, created_at, updated_at
+            SELECT id, title, description, status, priority, source_type, alexa_item_id, tags, created_at, updated_at
             FROM tasks
             ORDER BY id DESC
             """
         ).fetchall()
-
-    return [dict(row) for row in rows]
+    tasks = []
+    for row in rows:
+        task = dict(row)
+        task["tags"] = json.loads(task["tags"]) if task["tags"] else []
+        tasks.append(task)
+    return tasks
 
 
 @app.post("/api/tasks")
 def create_task(task: TaskCreate) -> dict[str, Any]:
+    tags_json = json.dumps([t.strip() for t in task.tags if t.strip()])
     with get_connection() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO tasks (title, description, status, priority, source_type)
-            VALUES (?, ?, 'open', ?, 'manual')
+            INSERT INTO tasks (title, description, status, priority, source_type, tags)
+            VALUES (?, ?, 'open', ?, 'manual', ?)
             """,
-            (task.title, task.description, task.priority.lower()),
+            (task.title, task.description, task.priority.lower(), tags_json),
         )
 
         task_id = cursor.lastrowid
-
         row = connection.execute(
             """
-            SELECT id, title, description, status, priority, source_type, created_at, updated_at
+            SELECT id, title, description, status, priority, source_type, tags, created_at, updated_at
             FROM tasks
             WHERE id = ?
             """,
             (task_id,),
         ).fetchone()
 
-    return dict(row)
+    result = dict(row)
+    result["tags"] = json.loads(result["tags"]) if result["tags"] else []
+    return result
+
+
+@app.get("/api/tags")
+def list_tags() -> list[str]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT tags FROM tasks WHERE tags != '[]'"
+        ).fetchall()
+    all_tags: set[str] = set()
+    for row in rows:
+        for tag in json.loads(row[0]):
+            all_tags.add(tag)
+    return sorted(all_tags)
 
 
 @app.get("/api/shopping")

@@ -38,6 +38,7 @@ export interface LocalTask {
   priority: Priority;
   source_type: string;
   alexa_item_id?: string;
+  tags: string[];
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,7 @@ export async function getTasks(): Promise<LocalTask[]> {
   const data: Array<LocalTask & { priority: string }> = await res.json();
   return data.map(t => ({
     ...t,
+    tags: t.tags ?? [],
     priority: (['high', 'medium', 'low'].includes(t.priority.toLowerCase()) ? t.priority.toLowerCase() : 'medium') as Priority,
   }));
 }
@@ -57,7 +59,7 @@ export async function markTaskDone(id: number): Promise<void> {
   if (!res.ok) throw new Error(`Failed to mark task ${id} as done`);
 }
 
-export async function createTask(data: { title: string; description: string; priority: Priority }): Promise<void> {
+export async function createTask(data: { title: string; description: string; priority: Priority; tags?: string[] }): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -68,7 +70,7 @@ export async function createTask(data: { title: string; description: string; pri
 
 export async function updateTask(
   id: number,
-  updates: { title: string; description: string; priority: Priority; created_at?: string },
+  updates: { title: string; description: string; priority: Priority; created_at?: string; tags?: string[] },
 ): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/tasks/${id}`, {
     method: 'PUT',
@@ -76,6 +78,12 @@ export async function updateTask(
     body: JSON.stringify(updates),
   });
   if (!res.ok) throw new Error(`Failed to update task ${id}`);
+}
+
+export async function getTags(): Promise<string[]> {
+  const res = await fetch(`${BASE_URL}/api/tags`);
+  if (!res.ok) throw new Error('Failed to fetch tags');
+  return res.json();
 }
 
 export interface ShoppingItem {

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type ReactElement } from 'react';
-import { login, syncAlexa, getTasks, checkAuthStatus, markTaskDone, updateTask, createTask, type LocalTask, type Priority } from './alexaApi';
+import { login, syncAlexa, getTasks, getTags, checkAuthStatus, markTaskDone, updateTask, createTask, type LocalTask, type Priority } from './alexaApi';
 import TaskCard from './TaskCard';
 import EditTaskModal from './EditTaskModal';
 import ShoppingPage from './ShoppingPage';
@@ -42,10 +42,13 @@ function App(): ReactElement {
   const [editingTask, setEditingTask] = useState<LocalTask | null>(null);
   const [addingTask, setAddingTask] = useState(false);
   const [page, setPage] = useState<Page>('tasks');
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [filterTag, setFilterTag] = useState<string>('');
 
   const loadDashboard = useCallback(async () => {
-    const allTasks = await getTasks();
+    const [allTasks, tags] = await Promise.all([getTasks(), getTags()]);
     setTasks(allTasks.filter(t => t.status === 'open'));
+    setAllTags(tags);
     setState('dashboard');
   }, []);
 
@@ -103,14 +106,14 @@ function App(): ReactElement {
     });
   }, []);
 
-  const handleSaveEdit = useCallback(async (updates: { title: string; description: string; priority: Priority; created_at?: string }) => {
+  const handleSaveEdit = useCallback(async (updates: { title: string; description: string; priority: Priority; created_at?: string; tags: string[] }) => {
     if (!editingTask) return;
     await updateTask(editingTask.id, updates);
     setEditingTask(null);
     await loadDashboard();
   }, [editingTask, loadDashboard]);
 
-  const handleCreateTask = useCallback(async (data: { title: string; description: string; priority: Priority; created_at?: string }) => {
+  const handleCreateTask = useCallback(async (data: { title: string; description: string; priority: Priority; created_at?: string; tags: string[] }) => {
     await createTask(data);
     setAddingTask(false);
     await loadDashboard();
@@ -186,6 +189,21 @@ function App(): ReactElement {
                     {!alexaEnabled && (
                       <p className="dashboard__notice">Local tasks only</p>
                     )}
+                    {allTags.length > 0 && (
+                      <label className="sort-label">
+                        Filter
+                        <select
+                          className="sort-select"
+                          value={filterTag}
+                          onChange={e => setFilterTag(e.target.value)}
+                        >
+                          <option value="">All</option>
+                          {allTags.map(tag => (
+                            <option key={tag} value={tag}>{tag}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     <label className="sort-label">
                       Sort by
                       <select
@@ -206,12 +224,16 @@ function App(): ReactElement {
                 </div>
                 <div className="dashboard">
                   <div className="container">
-                    {sortTasks(tasks, sort).map(task => (
+                    {sortTasks(
+                      filterTag ? tasks.filter(t => t.tags.includes(filterTag)) : tasks,
+                      sort,
+                    ).map(task => (
                       <TaskCard
                         key={`task-${task.id}`}
                         id={`task-${task.id}`}
                         title={task.title}
                         priority={task.priority}
+                        tags={task.tags}
                         selected={selectedIds.has(`task-${task.id}`)}
                         onToggle={toggleSelect}
                         onEdit={() => setEditingTask(task)}
@@ -235,12 +257,14 @@ function App(): ReactElement {
       {editingTask && (
         <EditTaskModal
           task={editingTask}
+          allTags={allTags}
           onSave={handleSaveEdit}
           onClose={() => setEditingTask(null)}
         />
       )}
       {addingTask && (
         <EditTaskModal
+          allTags={allTags}
           onSave={handleCreateTask}
           onClose={() => setAddingTask(false)}
         />
