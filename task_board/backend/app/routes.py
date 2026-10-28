@@ -11,7 +11,7 @@ from aioamazondevices.exceptions import CannotAuthenticate, CannotConnect, Canno
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.helpers import amazon_request, make_echo_api, get_settings, get_connection
+from app.helpers import amazon_request, create_echo_api, make_echo_api, get_settings, get_connection
 
 logger = logging.getLogger("alexa_api")
 
@@ -450,7 +450,7 @@ async def login(body: LoginRequest):
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing email or password (provide in .env)")
 
-    api = AmazonEchoApi(_session, email, password)
+    api = create_echo_api(_session, email, password)
     try:
         login_data = await api.login.login_mode_interactive(body.otp)
     except CannotAuthenticate as e:

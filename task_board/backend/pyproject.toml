@@ -7,7 +7,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "aiohttp",
-    "aioamazondevices",
+    "aioamazondevices==16.9.1",
     "python-dotenv>=1.2.2",
     "aiofiles>=25.1.0",
 ]

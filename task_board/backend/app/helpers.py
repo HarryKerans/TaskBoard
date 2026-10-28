@@ -4,8 +4,11 @@ import logging
 from dataclasses import dataclass
 from http import HTTPMethod
 from pathlib import Path
+from typing import Any
 
+from aiohttp import ClientSession
 from aioamazondevices.api import AmazonEchoApi
+from aioamazondevices.structures import AmazonSaveDataConfig
 from fastapi import HTTPException
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(Path(__file__).parent.parent / "data" / "tasks.db")))
@@ -37,10 +40,25 @@ def get_settings() -> Settings:
     )
 
 
+def create_echo_api(
+    session: ClientSession,
+    email: str,
+    password: str,
+    login_data: dict[str, Any] | None = None,
+) -> AmazonEchoApi:
+    return AmazonEchoApi(
+        session,
+        email,
+        password,
+        save_data=AmazonSaveDataConfig(path=DATABASE_PATH.parent),
+        login_data=login_data,
+    )
+
+
 def make_echo_api(session, login_data, credentials) -> AmazonEchoApi:
     if not session or not login_data or not credentials:
         raise HTTPException(status_code=401, detail="Not authenticated. Call /auth/login first.")
-    return AmazonEchoApi(
+    return create_echo_api(
         session,
         credentials["email"],
         credentials["password"],
